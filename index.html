@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v9 · apprentissage vidéo</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v10 · calibration sur vidéo</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -377,14 +377,16 @@
   </div>
   <div class="training-body">
     <div class="training-step">
-      <div class="training-step-title">1. Calibration requise</div>
-      <div class="setting-hint" id="training-calib-status">Vérification…</div>
+      <div class="training-step-title">1. Charger une vidéo test</div>
+      <button class="btn-secondary" onclick="App.pickTrainingFile()">🎬 Choisir une vidéo</button>
+      <div class="setting-hint" id="training-file-status">Aucune vidéo chargée</div>
     </div>
 
     <div class="training-step">
-      <div class="training-step-title">2. Charger une vidéo test</div>
-      <button class="btn-secondary" onclick="App.pickTrainingFile()">🎬 Choisir une vidéo</button>
-      <div class="setting-hint" id="training-file-status">Aucune vidéo chargée</div>
+      <div class="training-step-title">2. Calibration des 4 coins</div>
+      <div class="setting-hint" id="training-calib-status">Vérification…</div>
+      <button class="btn-primary" id="training-calib-btn" onclick="App.startTrainingCalibration()" style="display:none">🎯 Calibrer sur cette vidéo</button>
+      <div class="setting-hint">Recommandé : calibrer directement sur la vidéo chargée est plus précis qu'une calibration faite avec un autre cadrage.</div>
     </div>
 
     <div class="training-step">

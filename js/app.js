@@ -240,22 +240,36 @@ window.App = (function() {
   }
 
   function refreshTrainingScreen() {
+    const hasVideo = !!(window.VideoSource && VideoSource.has());
+    const isCalib = Calibration.isCalibrated();
+
     const calibStatus = document.getElementById('training-calib-status');
     if (calibStatus) {
-      if (Calibration.isCalibrated()) {
-        calibStatus.innerHTML = '<span style="color:var(--green)">✓ Tableau calibré</span>';
+      if (isCalib) {
+        calibStatus.innerHTML = '<span style="color:var(--green)">✓ Calibration présente (' +
+          (Calibration.getActiveProfileName && Calibration.getActiveProfileName() || 'défaut') +
+          ')</span>';
       } else {
-        calibStatus.innerHTML = '<span style="color:var(--orange)">⚠ Calibre d\'abord les 4 coins via 📷 Démarrer avec caméra</span>';
+        calibStatus.innerHTML = '<span style="color:var(--orange)">⚠ Pas encore calibré</span>';
       }
     }
+
+    // Le bouton "🎯 Calibrer sur cette vidéo" ne s'affiche que si une vidéo est chargée
+    const calibBtn = document.getElementById('training-calib-btn');
+    if (calibBtn) {
+      calibBtn.style.display = hasVideo ? '' : 'none';
+      calibBtn.textContent = isCalib ? '🎯 Re-calibrer sur cette vidéo' : '🎯 Calibrer sur cette vidéo';
+    }
+
     const fileStatus = document.getElementById('training-file-status');
     if (fileStatus) {
-      if (window.VideoSource && VideoSource.has()) {
+      if (hasVideo) {
         fileStatus.textContent = `✓ ${VideoSource.name()}`;
       } else {
         fileStatus.textContent = 'Aucune vidéo chargée';
       }
     }
+
     // Masquer les anciens résultats
     const res = document.getElementById('training-results');
     if (res) res.style.display = 'none';
@@ -263,13 +277,26 @@ window.App = (function() {
     if (prog) prog.style.display = 'none';
   }
 
-  async function startTraining() {
-    if (!Calibration.isCalibrated()) {
-      alert('Calibre d\'abord le tableau (4 coins) via 📷 Démarrer avec caméra.');
+  /** Démarre la calibration en utilisant la vidéo chargée comme source.
+   *  Après "Utiliser →", revient sur l'écran training au lieu de main. */
+  function startTrainingCalibration() {
+    if (!window.VideoSource || !VideoSource.has()) {
+      alert('Charge d\'abord une vidéo.');
       return;
     }
+    if (Calibration.setReturnToOnce) Calibration.setReturnToOnce('training');
+    showScreen('calib');
+    Calibration.reset();
+    Calibration.startCam();
+  }
+
+  async function startTraining() {
     if (!window.VideoSource || !VideoSource.has()) {
       alert('Charge d\'abord une vidéo test.');
+      return;
+    }
+    if (!Calibration.isCalibrated()) {
+      alert('Calibre d\'abord les 4 coins du tableau.\n\nTouche "🎯 Calibrer sur cette vidéo" pour faire la calibration directement sur la vidéo chargée (plus précis).');
       return;
     }
     const targetEl = document.getElementById('training-target');
@@ -441,6 +468,7 @@ points capturés: ${trace.length}`;
     speakSnippet,
     pickVideoFile, onVideoFileSelected, replayVideo,
     showTranscriptResult, closeTranscript, copyTranscript, speakTranscript,
-    pickTrainingFile, onTrainingFileSelected, startTraining, applyTraining
+    pickTrainingFile, onTrainingFileSelected, startTraining, applyTraining,
+    startTrainingCalibration
   };
 })();
