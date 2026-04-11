@@ -17,6 +17,10 @@ window.Calibration = (function() {
   let liveActive = false;
   let liveTimer = null;
   let liveLockedByUser = false; // true dès que l'utilisateur tap manuellement
+  // Destination one-shot après "Utiliser →" (sinon : main en mode caméra)
+  let returnToOnce = null;
+
+  function setReturnToOnce(dest) { returnToOnce = dest; }
 
   function load() {
     try {
@@ -226,7 +230,14 @@ window.Calibration = (function() {
       stopLive();
       stopCam();
       save();
-      if (window.App) App.goMain('camera');
+      // Routage : si un retour one-shot est défini, on y va ; sinon, main caméra.
+      const dest = returnToOnce;
+      returnToOnce = null;
+      if (dest === 'training') {
+        if (window.App) App.showScreen('training');
+      } else if (window.App) {
+        App.goMain('camera');
+      }
       return;
     }
     // streaming / tapping : forcer une nouvelle tentative auto
@@ -650,6 +661,7 @@ window.Calibration = (function() {
     load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
-    renderProfilesUI, promptAndSaveProfile
+    renderProfilesUI, promptAndSaveProfile,
+    setReturnToOnce
   };
 })();
