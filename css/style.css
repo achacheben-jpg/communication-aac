@@ -391,6 +391,90 @@ body {
 }
 .transcript-actions button { flex: 1; min-width: 100px; padding: 14px 10px; font-size: 13px; }
 
+/* ═══ ÉCRAN APPRENTISSAGE ═══ */
+#screen-training { gap: 16px; padding: 16px; }
+.training-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.training-step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.training-step-title {
+  font-size: 12px;
+  color: var(--blue-light);
+  font-family: 'DM Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#training-target {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 15px;
+  resize: vertical;
+  min-height: 70px;
+}
+.training-progress-bar {
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+#training-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--blue);
+  transition: width 0.2s;
+}
+#training-status-text {
+  font-size: 12px;
+  font-family: 'DM Mono', monospace;
+}
+.training-kpi {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--green);
+  text-align: center;
+  padding: 6px;
+}
+.training-transcripts {
+  font-size: 13px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.training-transcripts b { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; font-family: 'DM Mono', monospace; }
+.training-transcripts span {
+  display: block;
+  background: var(--bg);
+  padding: 8px 10px;
+  border-radius: 8px;
+  word-break: break-word;
+}
+.training-params {
+  font-size: 12px;
+  font-family: 'DM Mono', monospace;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+
 /* PROFIL CALIBRATION (dans settings) */
 .profile-row {
   display: flex;

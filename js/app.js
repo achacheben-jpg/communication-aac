@@ -136,6 +136,7 @@ window.App = (function() {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const el = document.getElementById('screen-' + id);
     if (el) el.classList.add('active');
+    if (id === 'training') refreshTrainingScreen();
   }
 
   function goCalib() {
@@ -219,6 +220,150 @@ window.App = (function() {
   }
 
   // ═══════════════════════════════════════════
+  // APPRENTISSAGE SUPERVISÉ (Training)
+  // ═══════════════════════════════════════════
+  let lastTrainingResult = null;
+
+  function pickTrainingFile() {
+    const inp = document.getElementById('training-file-input');
+    if (inp) inp.click();
+  }
+
+  function onTrainingFileSelected(e) {
+    const file = e && e.target && e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!window.VideoSource) return;
+    VideoSource.set(file);
+    const status = document.getElementById('training-file-status');
+    if (status) status.textContent = `✓ ${file.name}`;
+    e.target.value = '';
+  }
+
+  function refreshTrainingScreen() {
+    const calibStatus = document.getElementById('training-calib-status');
+    if (calibStatus) {
+      if (Calibration.isCalibrated()) {
+        calibStatus.innerHTML = '<span style="color:var(--green)">✓ Tableau calibré</span>';
+      } else {
+        calibStatus.innerHTML = '<span style="color:var(--orange)">⚠ Calibre d\'abord les 4 coins via 📷 Démarrer avec caméra</span>';
+      }
+    }
+    const fileStatus = document.getElementById('training-file-status');
+    if (fileStatus) {
+      if (window.VideoSource && VideoSource.has()) {
+        fileStatus.textContent = `✓ ${VideoSource.name()}`;
+      } else {
+        fileStatus.textContent = 'Aucune vidéo chargée';
+      }
+    }
+    // Masquer les anciens résultats
+    const res = document.getElementById('training-results');
+    if (res) res.style.display = 'none';
+    const prog = document.getElementById('training-progress-wrap');
+    if (prog) prog.style.display = 'none';
+  }
+
+  async function startTraining() {
+    if (!Calibration.isCalibrated()) {
+      alert('Calibre d\'abord le tableau (4 coins) via 📷 Démarrer avec caméra.');
+      return;
+    }
+    if (!window.VideoSource || !VideoSource.has()) {
+      alert('Charge d\'abord une vidéo test.');
+      return;
+    }
+    const targetEl = document.getElementById('training-target');
+    const target = (targetEl && targetEl.value || '').trim();
+    if (!target) {
+      alert('Tape le texte attendu (ce que la personne a écrit dans la vidéo).');
+      return;
+    }
+    if (!window.Training) {
+      alert('Module Training non chargé.');
+      return;
+    }
+
+    const progWrap = document.getElementById('training-progress-wrap');
+    const progFill = document.getElementById('training-progress-fill');
+    const statusText = document.getElementById('training-status-text');
+    const resultsWrap = document.getElementById('training-results');
+    const startBtn = document.getElementById('training-start-btn');
+
+    if (progWrap) progWrap.style.display = '';
+    if (resultsWrap) resultsWrap.style.display = 'none';
+    if (startBtn) { startBtn.disabled = true; startBtn.textContent = '⏳ En cours…'; }
+
+    try {
+      // Phase 1 : enregistrer la trace en jouant la vidéo
+      if (statusText) statusText.textContent = 'Phase 1/2 — capture de la trace (lecture vidéo)…';
+      if (progFill) progFill.style.width = '0%';
+
+      showScreen('main'); // la vidéo doit être dans #video-live (mode caméra)
+      const trace = await Training.collectTrace((pct) => {
+        if (progFill) progFill.style.width = (pct * 50) + '%';
+      });
+      Camera.stop();
+      showScreen('training');
+
+      if (!trace || trace.length === 0) {
+        if (statusText) statusText.innerHTML = '<span style="color:var(--red)">❌ Aucune détection du pied pendant la vidéo. Vérifie la calibration et le mode source caméra dans ⚙.</span>';
+        if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
+        return;
+      }
+
+      if (statusText) statusText.textContent = `Phase 2/2 — grid search (${trace.length} points capturés)…`;
+
+      // Phase 2 : grid search
+      const best = await Training.gridSearch(trace, target, (pct) => {
+        if (progFill) progFill.style.width = (50 + pct * 50) + '%';
+      });
+
+      if (best.err) {
+        if (statusText) statusText.innerHTML = `<span style="color:var(--red)">❌ ${best.err}</span>`;
+        if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
+        return;
+      }
+
+      lastTrainingResult = best;
+
+      // Afficher résultats
+      if (progFill) progFill.style.width = '100%';
+      if (statusText) statusText.textContent = '✓ Apprentissage terminé';
+
+      const accuracy = Math.max(0, Math.round((1 - best.dist) * 100));
+      const accEl = document.getElementById('training-accuracy');
+      if (accEl) accEl.textContent = accuracy + '% de précision';
+      const gotEl = document.getElementById('training-got');
+      if (gotEl) gotEl.textContent = best.transcript || '(vide)';
+      const wantEl = document.getElementById('training-want');
+      if (wantEl) wantEl.textContent = target;
+      const paramsEl = document.getElementById('training-params');
+      if (paramsEl) {
+        paramsEl.textContent =
+          `offset vertical: ${best.offsetRows.toFixed(2)} lignes
+offset horizontal: ${best.offsetU.toFixed(3)}
+dwell: ${best.dwellMs} ms
+points capturés: ${trace.length}`;
+      }
+
+      if (resultsWrap) resultsWrap.style.display = '';
+      if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
+
+    } catch (e) {
+      console.error('[training] error', e);
+      if (statusText) statusText.innerHTML = `<span style="color:var(--red)">❌ Erreur : ${e.message}</span>`;
+      if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
+    }
+  }
+
+  function applyTraining() {
+    if (!lastTrainingResult || !window.Training) return;
+    Training.apply(lastTrainingResult);
+    setStatus('blue', '✓ Paramètres d\'apprentissage appliqués');
+    setTimeout(() => showScreen('home'), 400);
+  }
+
+  // ═══════════════════════════════════════════
   // MODE (manuel / caméra / scan)
   // ═══════════════════════════════════════════
   function setMode(m) {
@@ -278,6 +423,8 @@ window.App = (function() {
     if (sc && window.Camera && Camera.getSource) sc.value = Camera.getSource();
     // Afficher la liste des profils de calibration
     if (Calibration.renderProfilesUI) Calibration.renderProfilesUI();
+    // Charger les paramètres d'apprentissage sauvegardés (s'il y en a)
+    if (window.Training && Training.loadSavedOnStartup) Training.loadSavedOnStartup();
     render();
   }
 
@@ -293,6 +440,7 @@ window.App = (function() {
     setSpeakOnSentence: (v) => setSetting(SPEAK_SENTENCE_KEY, v),
     speakSnippet,
     pickVideoFile, onVideoFileSelected, replayVideo,
-    showTranscriptResult, closeTranscript, copyTranscript, speakTranscript
+    showTranscriptResult, closeTranscript, copyTranscript, speakTranscript,
+    pickTrainingFile, onTrainingFileSelected, startTraining, applyTraining
   };
 })();

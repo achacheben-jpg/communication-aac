@@ -57,10 +57,13 @@ window.Camera = (function() {
         v.playsInline = true;
         v.currentTime = 0;
         // Quand la vidéo se termine, afficher la transcription
-        v.onended = onVideoEnded;
+        // SAUF en mode entraînement : Training pose son propre handler.
+        v.onended = trainingMode ? null : onVideoEnded;
         await v.play();
-        if (window.VideoSource.resetTranscript) VideoSource.resetTranscript();
-        if (window.App) App.clearAll && App.clearAll();
+        if (!trainingMode) {
+          if (window.VideoSource.resetTranscript) VideoSource.resetTranscript();
+          if (window.App) App.clearAll && App.clearAll();
+        }
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 } },
@@ -145,6 +148,25 @@ window.Camera = (function() {
     if (window.App && App.showTranscriptResult) {
       App.showTranscriptResult();
     }
+  }
+
+  // Mode entraînement : enregistre une trace des UV détectées pendant
+  // toute la lecture, SANS déclencher de dwell/sélection.
+  let trainingMode = false;
+  let trainingTrace = [];
+
+  function startTraining() {
+    trainingMode = true;
+    trainingTrace = [];
+    console.log('[camera] training mode ON');
+  }
+
+  function stopTrainingAndGetTrace() {
+    trainingMode = false;
+    const trace = trainingTrace;
+    trainingTrace = [];
+    console.log('[camera] training mode OFF, trace length:', trace.length);
+    return trace;
   }
 
   function setDetectionState(s) {
@@ -330,6 +352,14 @@ window.Camera = (function() {
       };
       lastFootUVBoard = uv;
       const cell = getCellAtBoardUV(corrected);
+
+      // Mode entraînement : on enregistre la trace BRUTE (avant offset)
+      // et on n'appelle PAS handleDwell (pas de sélection pendant training).
+      if (trainingMode) {
+        const t = (v.currentTime !== undefined && !isNaN(v.currentTime)) ? v.currentTime : (Date.now() / 1000);
+        trainingTrace.push({ t, u: uv.u, v: uv.v });
+        return; // saute le dessin de la cible rouge et le dwell
+      }
 
       // ═══ POINT ROUGE : endroit réellement sélectionné ═══
       // On mappe le UV corrigé (dans le tableau) vers la caméra via
@@ -612,5 +642,9 @@ window.Camera = (function() {
     };
   }
 
-  return { start, stop, getLastFootUVBoard, cellCenterUV, getSource, setSource, captureBackground };
+  return {
+    start, stop, getLastFootUVBoard, cellCenterUV,
+    getSource, setSource, captureBackground,
+    startTraining, stopTrainingAndGetTrace
+  };
 })();
