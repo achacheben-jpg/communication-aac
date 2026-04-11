@@ -148,8 +148,8 @@ body {
 .step-dot.done { background: var(--green); }
 .step-dot.current { background: var(--blue); }
 
-.calib-actions { display: flex; gap: 10px; }
-.calib-actions button { flex: 1; }
+.calib-actions { display: flex; gap: 8px; }
+.calib-actions button { flex: 1; padding: 14px 8px; font-size: 13px; white-space: nowrap; }
 
 /* ═══ ÉCRAN PRINCIPAL ═══ */
 #screen-main { gap: 8px; padding: 10px; }

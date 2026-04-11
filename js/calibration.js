@@ -36,6 +36,14 @@ window.Calibration = (function() {
     if (msg) msg.innerHTML = 'Appuyez sur <b>Démarrer</b> pour ouvrir la caméra.';
     const btn = document.getElementById('calib-action-btn');
     if (btn) btn.textContent = 'Démarrer caméra';
+    showAutoBtn(false);
+    const c = document.getElementById('canvas-calib');
+    if (c) { const ctx = c.getContext('2d'); ctx && ctx.clearRect(0, 0, c.width, c.height); }
+  }
+
+  function showAutoBtn(visible) {
+    const b = document.getElementById('calib-auto-btn');
+    if (b) b.style.display = visible ? '' : 'none';
   }
 
   async function startCam() {
@@ -49,16 +57,25 @@ window.Calibration = (function() {
       await v.play();
       state = 'streaming';
       document.getElementById('calib-msg').innerHTML =
-        'Caméra active. Cadrez le tableau entier.<br>Touchez le <b>coin 1 (HAUT-GAUCHE)</b> directement sur l\'écran.';
-      document.getElementById('calib-action-btn').textContent = 'Coin 1 : HAUT-GAUCHE';
+        'Caméra active. Cadrez le tableau entier.<br>L\'<b>auto-détection</b> va tenter de trouver les 4 coins. En cas d\'échec, touchez directement chaque coin sur l\'écran.';
+      document.getElementById('calib-action-btn').textContent = '⚡ Auto-détecter';
+      showAutoBtn(true);
 
-      setTimeout(() => {
-        const c = document.getElementById('canvas-calib');
-        c.width = v.videoWidth || v.clientWidth;
-        c.height = v.videoHeight || v.clientHeight;
-      }, 500);
+      // Dimensionner le canvas pour qu'il corresponde à la taille CSS affichée
+      // (important : on dessine en coordonnées CSS, pas en pixels vidéo intrinsèques)
+      await new Promise(r => requestAnimationFrame(r));
+      const c = document.getElementById('canvas-calib');
+      const rect = v.getBoundingClientRect();
+      c.width = Math.max(1, Math.round(rect.width));
+      c.height = Math.max(1, Math.round(rect.height));
 
       arm();
+
+      // Tentative automatique 1.2 s après le démarrage pour laisser l'exposition
+      // se stabiliser. L'utilisateur peut toujours re-déclencher ou taper manuellement.
+      setTimeout(() => {
+        if (state === 'streaming' || state === 'tapping') auto();
+      }, 1200);
 
     } catch (e) {
       document.getElementById('calib-msg').innerHTML =
@@ -74,7 +91,8 @@ window.Calibration = (function() {
       if (window.App) App.goMain('camera');
       return;
     }
-    // En cours de calibration : juste afficher l'instruction
+    // streaming / tapping : le bouton principal déclenche l'auto-détection
+    auto();
   }
 
   function arm() {
@@ -146,6 +164,218 @@ window.Calibration = (function() {
 
   function isCalibrated() {
     return points && points.length === 4;
+  }
+
+  // ═══════════════════════════════════════════
+  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7)
+  // ═══════════════════════════════════════════
+  // Algorithme : on cherche la plus grande composante connexe de pixels
+  // saturés (le tableau est coloré — bleu/jaune/rouge — sur un fond
+  // typiquement peu saturé). On extrait ensuite les 4 coins par les
+  // extrêmes de (x+y) et (x-y), ce qui fonctionne aussi quand le tableau
+  // est légèrement incliné.
+
+  function auto() {
+    const v = document.getElementById('video-calib');
+    if (!v || v.readyState < 2) {
+      flashMsg('Caméra non prête, réessayez dans un instant.', true);
+      return;
+    }
+    const detected = detectBoardCorners(v);
+    if (!detected) {
+      flashMsg('Tableau non détecté — vérifiez l\'éclairage et le cadrage, ou touchez les 4 coins manuellement.', true);
+      return;
+    }
+
+    // Appliquer la détection
+    points = detected;
+    step = 4;
+    state = 'done';
+    for (let i = 0; i < 4; i++) {
+      const d = document.getElementById('dot-' + i);
+      if (d) d.className = 'step-dot done';
+    }
+
+    // Désarmer le tap manuel (mais laisser le bouton Auto disponible pour ré-essayer)
+    const canvas = document.getElementById('canvas-calib');
+    if (canvas) {
+      canvas.ontouchend = canvas.onclick = null;
+      canvas.style.cursor = 'default';
+    }
+
+    drawPreviewQuad(detected);
+
+    const msg = document.getElementById('calib-msg');
+    if (msg) msg.innerHTML =
+      '✅ <b>Auto-détection réussie</b> — 4 coins trouvés. Vérifiez la superposition verte et touchez <b>Utiliser →</b>. Relancez <b>⚡ Auto</b> pour re-détecter.';
+    const btn = document.getElementById('calib-action-btn');
+    if (btn) btn.textContent = 'Utiliser →';
+  }
+
+  function flashMsg(text, isError) {
+    const msg = document.getElementById('calib-msg');
+    if (!msg) return;
+    msg.innerHTML = isError
+      ? `<span style="color:var(--orange)">${text}</span>`
+      : text;
+  }
+
+  /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
+   *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
+   *  ou null si la détection échoue. */
+  function detectBoardCorners(video) {
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 360;
+    const W = 240;
+    const H = Math.max(90, Math.round(W * vh / vw));
+
+    const cvs = document.createElement('canvas');
+    cvs.width = W;
+    cvs.height = H;
+    const ctx = cvs.getContext('2d');
+    try {
+      ctx.drawImage(video, 0, 0, W, H);
+    } catch (e) { return null; }
+    let data;
+    try { data = ctx.getImageData(0, 0, W, H).data; }
+    catch (e) { return null; }
+
+    // 1) Masque de saturation : pixels colorés = probablement tableau
+    const mask = new Uint8Array(W * H);
+    let maskCount = 0;
+    for (let i = 0; i < W * H; i++) {
+      const j = i * 4;
+      const r = data[j], g = data[j + 1], b = data[j + 2];
+      const maxC = Math.max(r, g, b);
+      if (maxC < 45) continue; // trop sombre
+      const minC = Math.min(r, g, b);
+      const sat = (maxC - minC) / maxC;
+      if (sat > 0.3) {
+        mask[i] = 1;
+        maskCount++;
+      }
+    }
+    if (maskCount < W * H * 0.02) return null;
+
+    // 2) Plus grande composante connexe (BFS itératif, 4-connectivité)
+    const visited = new Uint8Array(W * H);
+    const stack = new Int32Array(W * H);
+    let bestComp = null;
+    let bestSize = 0;
+    for (let start = 0; start < W * H; start++) {
+      if (!mask[start] || visited[start]) continue;
+      let top = 0;
+      stack[top++] = start;
+      visited[start] = 1;
+      const comp = [];
+      while (top > 0) {
+        const p = stack[--top];
+        comp.push(p);
+        const x = p % W;
+        const y = (p - x) / W;
+        if (x > 0) {
+          const q = p - 1;
+          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+        }
+        if (x < W - 1) {
+          const q = p + 1;
+          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+        }
+        if (y > 0) {
+          const q = p - W;
+          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+        }
+        if (y < H - 1) {
+          const q = p + W;
+          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+        }
+      }
+      if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
+    }
+
+    if (!bestComp || bestSize < W * H * 0.015) return null;
+
+    // 3) Extraire les 4 coins extrêmes
+    let tlS = Infinity, brS = -Infinity, trS = -Infinity, blS = Infinity;
+    let tlX = 0, tlY = 0, trX = 0, trY = 0, blX = 0, blY = 0, brX = 0, brY = 0;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let k = 0; k < bestComp.length; k++) {
+      const p = bestComp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      const xPy = x + y;
+      const xMy = x - y;
+      if (xPy < tlS) { tlS = xPy; tlX = x; tlY = y; }
+      if (xPy > brS) { brS = xPy; brX = x; brY = y; }
+      if (xMy > trS) { trS = xMy; trX = x; trY = y; }
+      if (xMy < blS) { blS = xMy; blX = x; blY = y; }
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+
+    // 4) Sanity checks
+    const bboxW = maxX - minX + 1;
+    const bboxH = maxY - minY + 1;
+    if (bboxW < W * 0.18 || bboxH < H * 0.18) return null;
+    const ar = bboxW / bboxH;
+    if (ar < 0.4 || ar > 3.0) return null;
+
+    // Les 4 coins doivent être distincts (au moins 4 px d'écart deux à deux)
+    const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+    if (dist(tlX, tlY, trX, trY) < 4) return null;
+    if (dist(blX, blY, brX, brY) < 4) return null;
+
+    return [
+      { x: tlX / W, y: tlY / H },
+      { x: trX / W, y: trY / H },
+      { x: blX / W, y: blY / H },
+      { x: brX / W, y: brY / H }
+    ];
+  }
+
+  function drawPreviewQuad(pts) {
+    const canvas = document.getElementById('canvas-calib');
+    const video = document.getElementById('video-calib');
+    if (!canvas || !video) return;
+    const rect = video.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width));
+    canvas.height = Math.max(1, Math.round(rect.height));
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const pxs = pts.map(p => ({ x: p.x * canvas.width, y: p.y * canvas.height }));
+
+    // Quadrilatère rempli
+    ctx.beginPath();
+    ctx.moveTo(pxs[0].x, pxs[0].y); // TL
+    ctx.lineTo(pxs[1].x, pxs[1].y); // TR
+    ctx.lineTo(pxs[3].x, pxs[3].y); // BR
+    ctx.lineTo(pxs[2].x, pxs[2].y); // BL
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(29,158,117,0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#1D9E75';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Marqueurs de coin
+    const labels = ['HG', 'HD', 'BG', 'BD'];
+    pxs.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(29,158,117,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 11px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labels[i], p.x, p.y);
+    });
   }
 
   // ═══════════════════════════════════════════
@@ -225,7 +455,7 @@ window.Calibration = (function() {
   }
 
   return {
-    load, getPoints, reset, startCam, action, stopCam, save, isCalibrated,
+    load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel
   };
 })();
