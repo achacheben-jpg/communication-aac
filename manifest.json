@@ -1,0 +1,15 @@
+{
+  "name": "Communication AAC",
+  "short_name": "Communication",
+  "description": "Application de communication assistée — tableau de lettres et syllabes vers voix.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#2980b9",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
