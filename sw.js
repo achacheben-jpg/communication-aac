@@ -1,7 +1,7 @@
 // Service Worker — cache offline-first
 // IMPORTANT : bumper CACHE_VERSION à chaque déploiement pour invalider
 // l'ancien cache sur les clients installés.
-const CACHE_VERSION = 'aac-v7-video-upload';
+const CACHE_VERSION = 'aac-v8-red-target';
 const CORE_ASSETS = [
   './',
   './index.html',
