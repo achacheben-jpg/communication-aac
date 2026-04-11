@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v5 · auto-calib live</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v6 · source caméra · voix auto · profils</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -117,6 +117,48 @@
       <span class="setting-val" id="val-offset">2.0</span>
     </div>
 
+    <div class="setting-section-title">Source caméra</div>
+    <div class="setting-row">
+      <span class="setting-label">mode détection</span>
+      <select id="sl-cam-source" class="setting-input" onchange="Camera.setSource(this.value)">
+        <option value="fixed">Caméra fixe (pied seul)</option>
+        <option value="handheld">iPhone (corps entier)</option>
+      </select>
+    </div>
+    <div class="setting-hint">"Fixe" : détection par pixels (soustraction de fond). "iPhone" : MediaPipe Pose (le corps doit être visible).</div>
+    <div class="setting-row">
+      <span class="setting-label">recapturer le fond</span>
+      <button class="btn-ghost" onclick="Camera.captureBackground && Camera.captureBackground()">Capturer maintenant</button>
+    </div>
+    <div class="setting-hint">En mode "Fixe" : retire le pied du cadre puis touche ce bouton pour réapprendre le fond.</div>
+
+    <div class="setting-section-title">Voix automatique</div>
+    <div class="setting-row">
+      <span class="setting-label">lire chaque sélection</span>
+      <label class="setting-val">
+        <input type="checkbox" id="chk-speak-sel" onchange="App.setSpeakOnSelect(this.checked)"> on
+      </label>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">lire chaque mot complet</span>
+      <label class="setting-val">
+        <input type="checkbox" id="chk-speak-word" onchange="App.setSpeakOnWord(this.checked)"> on
+      </label>
+    </div>
+    <div class="setting-row">
+      <span class="setting-label">lire sur ponctuation</span>
+      <label class="setting-val">
+        <input type="checkbox" id="chk-speak-sent" onchange="App.setSpeakOnSentence(this.checked)"> on
+      </label>
+    </div>
+    <div class="setting-hint">"Lire chaque sélection" est le plus réactif (feedback immédiat sur chaque lettre/syllabe). Utile pour l'utilisateur qui pointe avec son pied.</div>
+
+    <div class="setting-section-title">Profils de calibration</div>
+    <div class="setting-row">
+      <button class="btn-ghost" onclick="Calibration.promptAndSaveProfile()">💾 Sauvegarder sous…</button>
+    </div>
+    <div id="profiles-list"></div>
+
     <div class="setting-section-title">Prédiction IA</div>
     <div class="setting-row">
       <span class="setting-label">clé API Anthropic</span>
@@ -162,6 +204,10 @@
   <div id="camera-live-wrap">
     <video id="video-live" autoplay playsinline muted></video>
     <canvas id="canvas-live"></canvas>
+    <div id="foot-badge" class="foot-badge">
+      <div class="foot-badge-dot"></div>
+      <span id="foot-badge-text">cherche le pied</span>
+    </div>
   </div>
 
   <!-- Tableau -->

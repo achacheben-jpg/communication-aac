@@ -1,10 +1,17 @@
 // ═══════════════════════════════════════════
-// CAMÉRA LIVE + DÉTECTION PIED (MediaPipe Pose)
+// CAMÉRA LIVE + DÉTECTION PIED
 // ═══════════════════════════════════════════
+// Deux modes de source :
+//   - 'fixed'    : caméra fixe au niveau des pieds. Seul le pied est visible.
+//                  → détection par pixels (plus grande tache sombre dans le
+//                  quadrilatère calibré, avec soustraction de fond).
+//   - 'handheld' : iPhone tenu à hauteur d'homme, corps visible.
+//                  → détection via MediaPipe Pose (landmarks 31/32 = pieds).
 window.Camera = (function() {
 
   const MEDIAPIPE_POSE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js';
   const MEDIAPIPE_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/pose';
+  const SOURCE_KEY = 'aac_camera_source';
 
   let stream = null;
   let detectActive = false;
@@ -17,6 +24,23 @@ window.Camera = (function() {
   let poseLoading = false;
   let usePoseModel = false;
   let pendingSend = false;
+  // Détection pixels (mode fixed)
+  let bgFrame = null;              // Uint8ClampedArray (R,G,B,R,G,B,...)
+  let bgFrameW = 0, bgFrameH = 0;
+  let framesSinceBgRefresh = 0;
+  // Indicateur visuel
+  let detectionState = 'idle';     // 'idle' | 'searching' | 'detected'
+
+  function getSource() {
+    return localStorage.getItem(SOURCE_KEY) || 'fixed';
+  }
+
+  function setSource(v) {
+    if (v !== 'fixed' && v !== 'handheld') return;
+    localStorage.setItem(SOURCE_KEY, v);
+    // Si la caméra tourne, redémarrer pour appliquer le nouveau mode
+    if (detectActive) { stop(); start(); }
+  }
 
   async function start() {
     document.getElementById('camera-live-wrap').classList.add('visible');
@@ -31,8 +55,8 @@ window.Camera = (function() {
       v.srcObject = stream;
       await v.play();
 
-      if (window.App) App.setStatus('green', 'Caméra active — chargement détecteur…');
       detectActive = true;
+      setDetectionState('searching');
 
       setTimeout(() => {
         const c = document.getElementById('canvas-live');
@@ -42,15 +66,29 @@ window.Camera = (function() {
 
       Calibration.load();
       if (!Calibration.isCalibrated()) {
-        if (window.App) App.setStatus('orange', 'Pas de calibration — recalibrez via 📐');
+        if (window.App) App.setStatus('orange', 'Pas de calibration — touchez 📐');
       }
 
-      // Charger MediaPipe Pose en tâche de fond ; fallback sur analyse pixels si échec
-      loadPose().then(() => {
-        if (poseInstance && window.App) App.setStatus('green', 'Caméra + Pose actif');
-      }).catch(() => {
-        if (window.App) App.setStatus('green', 'Caméra active (détection pixels)');
-      });
+      const source = getSource();
+      console.log('[camera] source =', source);
+
+      if (source === 'handheld') {
+        // MediaPipe Pose pour corps entier
+        if (window.App) App.setStatus('orange', 'Chargement MediaPipe Pose…');
+        loadPose().then(() => {
+          if (poseInstance && window.App) App.setStatus('green', '👣 Pose actif — cherche le pied');
+        }).catch((e) => {
+          console.warn('[camera] Pose load failed', e);
+          if (window.App) App.setStatus('orange', 'Pose indisponible — bascule en mode fixe');
+          usePoseModel = false;
+        });
+      } else {
+        // Mode caméra fixe : pixels uniquement, pas besoin de MediaPipe
+        usePoseModel = false;
+        if (window.App) App.setStatus('orange', 'Caméra fixe — cherche le pied');
+        // Capturer une image de fond (sans pied) après 1s pour background subtraction
+        captureBackgroundAfter(1200);
+      }
 
       detectLoop();
 
@@ -69,6 +107,63 @@ window.Camera = (function() {
     clearDwell();
     lastFootPos = null;
     lastFootUVBoard = null;
+    bgFrame = null;
+    setDetectionState('idle');
+  }
+
+  function setDetectionState(s) {
+    if (s === detectionState) return;
+    detectionState = s;
+    const badge = document.getElementById('foot-badge');
+    const txt = document.getElementById('foot-badge-text');
+    if (badge) {
+      badge.classList.remove('detected', 'lost');
+      if (s === 'detected') badge.classList.add('detected');
+      else if (s === 'searching') {/* default orange */}
+      else if (s === 'lost') badge.classList.add('lost');
+    }
+    if (txt) {
+      if (s === 'detected') txt.textContent = '✓ pied détecté';
+      else if (s === 'searching') txt.textContent = 'cherche le pied…';
+      else if (s === 'lost') txt.textContent = 'pied perdu';
+      else txt.textContent = 'inactif';
+    }
+    if (window.App) {
+      if (s === 'detected') App.setStatus('green', '👣 Pied détecté');
+      else if (s === 'searching') App.setStatus('orange', '🔍 Cherche le pied');
+    }
+  }
+
+  /** Capturer une frame de référence (pour background subtraction en mode fixe) */
+  function captureBackgroundAfter(ms) {
+    setTimeout(() => {
+      if (!detectActive || getSource() !== 'fixed') return;
+      captureBackground();
+      // Rafraîchir périodiquement (tous les 20s) pour s'adapter à l'éclairage
+      setInterval(() => {
+        if (!detectActive || getSource() !== 'fixed') return;
+        // Ne pas rafraîchir si on est en plein dwell
+        if (!dwellCell) captureBackground();
+      }, 20000);
+    }, ms);
+  }
+
+  function captureBackground() {
+    const v = document.getElementById('video-live');
+    if (!v || v.readyState < 2) return;
+    try {
+      const scale = 0.25;
+      const w = Math.round((v.videoWidth || 640) * scale);
+      const h = Math.round((v.videoHeight || 360) * scale);
+      const cvs = document.createElement('canvas');
+      cvs.width = w; cvs.height = h;
+      const ctx = cvs.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(v, 0, 0, w, h);
+      const d = ctx.getImageData(0, 0, w, h).data;
+      bgFrame = new Uint8ClampedArray(d);
+      bgFrameW = w; bgFrameH = h;
+      console.log('[camera] background frame captured', w, 'x', h);
+    } catch (e) { console.warn('[camera] bg capture failed', e); }
   }
 
   /** ═══ MediaPipe Pose loader ═══ */
@@ -164,8 +259,10 @@ window.Camera = (function() {
       if (!footPos) {
         clearDwell();
         lastFootUVBoard = null;
+        setDetectionState('searching');
         return;
       }
+      setDetectionState('detected');
 
       // Dessin curseur
       ctx.beginPath();
@@ -203,32 +300,128 @@ window.Camera = (function() {
     }
   }
 
-  /** Analyse pixels fallback (comme l'original) */
+  /** Détection par pixels : trouve la plus grande zone qui "diffère de l'arrière-plan"
+   *  (soustraction de fond si disponible) OU la plus grande tache sombre.
+   *  Ne cherche que DANS le polygone calibré (le tableau) pour éviter les faux
+   *  positifs sur le fond de la scène. */
   function detectFootFromPixels(video) {
     try {
-      const offscreen = document.createElement('canvas');
       const scale = 0.25;
-      offscreen.width = (video.videoWidth || 640) * scale;
-      offscreen.height = (video.videoHeight || 360) * scale;
-      const octx = offscreen.getContext('2d');
-      octx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
-      const data = octx.getImageData(0, 0, offscreen.width, offscreen.height).data;
-      let sumX = 0, sumY = 0, count = 0;
-      for (let y = 0; y < offscreen.height; y++) {
-        for (let x = 0; x < offscreen.width; x++) {
-          const i = (y * offscreen.width + x) * 4;
-          const b = (data[i] + data[i+1] + data[i+2]) / 3;
-          const ny = y / offscreen.height;
-          if (b < 80 && ny > 0.3) {
-            sumX += x / offscreen.width;
-            sumY += ny;
-            count++;
+      const w = Math.round((video.videoWidth || 640) * scale);
+      const h = Math.round((video.videoHeight || 360) * scale);
+      const cvs = document.createElement('canvas');
+      cvs.width = w; cvs.height = h;
+      const octx = cvs.getContext('2d', { willReadFrequently: true });
+      octx.drawImage(video, 0, 0, w, h);
+      const data = octx.getImageData(0, 0, w, h).data;
+
+      // Pré-calculer le masque "dans le polygone calibré"
+      const inPoly = new Uint8Array(w * h);
+      const pts = Calibration.isCalibrated() ? Calibration.getPoints() : null;
+      if (pts) {
+        const poly = [pts[0], pts[1], pts[3], pts[2]]; // TL, TR, BR, BL
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const nx = x / w, ny = y / h;
+            if (pointInQuad(nx, ny, poly)) inPoly[y * w + x] = 1;
           }
         }
+      } else {
+        // Pas de calibration : chercher dans toute l'image (partie basse)
+        for (let y = Math.floor(h * 0.3); y < h; y++) {
+          for (let x = 0; x < w; x++) inPoly[y * w + x] = 1;
+        }
       }
-      if (count > 20) return { x: sumX / count, y: sumY / count };
-    } catch (e) {}
-    return null;
+
+      // Construire un masque "pixel qui est probablement le pied"
+      const mask = new Uint8Array(w * h);
+      let maskCount = 0;
+
+      if (bgFrame && bgFrameW === w && bgFrameH === h) {
+        // Background subtraction : le pied est ce qui diffère du fond
+        for (let i = 0; i < w * h; i++) {
+          if (!inPoly[i]) continue;
+          const j = i * 4;
+          const dr = Math.abs(data[j] - bgFrame[j]);
+          const dg = Math.abs(data[j + 1] - bgFrame[j + 1]);
+          const db = Math.abs(data[j + 2] - bgFrame[j + 2]);
+          const diff = dr + dg + db;
+          if (diff > 90) { mask[i] = 1; maskCount++; }
+        }
+      } else {
+        // Fallback : chercher pixels sombres (le pied est typiquement plus
+        // sombre que le tableau coloré)
+        for (let i = 0; i < w * h; i++) {
+          if (!inPoly[i]) continue;
+          const j = i * 4;
+          const b = (data[j] + data[j + 1] + data[j + 2]) / 3;
+          if (b < 90) { mask[i] = 1; maskCount++; }
+        }
+      }
+
+      if (maskCount < 15) return null;
+
+      // Trouver la plus grande composante connexe (BFS)
+      const visited = new Uint8Array(w * h);
+      const stack = new Int32Array(w * h);
+      let bestCx = 0, bestCy = 0, bestSize = 0;
+
+      for (let start = 0; start < w * h; start++) {
+        if (!mask[start] || visited[start]) continue;
+        let top = 0;
+        stack[top++] = start;
+        visited[start] = 1;
+        let sumX = 0, sumY = 0, size = 0;
+        while (top > 0) {
+          const p = stack[--top];
+          const x = p % w;
+          const y = (p - x) / w;
+          sumX += x;
+          sumY += y;
+          size++;
+          if (x > 0) {
+            const q = p - 1;
+            if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+          }
+          if (x < w - 1) {
+            const q = p + 1;
+            if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+          }
+          if (y > 0) {
+            const q = p - w;
+            if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+          }
+          if (y < h - 1) {
+            const q = p + w;
+            if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
+          }
+        }
+        if (size > bestSize) {
+          bestSize = size;
+          bestCx = sumX / size;
+          bestCy = sumY / size;
+        }
+      }
+
+      if (bestSize < 15) return null;
+      return { x: bestCx / w, y: bestCy / h };
+    } catch (e) {
+      console.warn('[camera] pixel detect error', e);
+      return null;
+    }
+  }
+
+  /** Point-in-quad test (crossing number) */
+  function pointInQuad(px, py, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y;
+      const xj = poly[j].x, yj = poly[j].y;
+      const intersect = ((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
   }
 
   function drawCalibOverlay(ctx, canvas) {
@@ -327,5 +520,5 @@ window.Camera = (function() {
     };
   }
 
-  return { start, stop, getLastFootUVBoard, cellCenterUV };
+  return { start, stop, getLastFootUVBoard, cellCenterUV, getSource, setSource, captureBackground };
 })();
