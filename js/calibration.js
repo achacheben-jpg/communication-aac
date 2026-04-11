@@ -28,6 +28,97 @@ window.Calibration = (function() {
 
   function getPoints() { return points; }
 
+  // ═══════════════════════════════════════════
+  // PROFILS DE CALIBRATION (multiples, nommés)
+  // ═══════════════════════════════════════════
+  const PROFILES_KEY = 'aac_calib_profiles';
+  const ACTIVE_PROFILE_KEY = 'aac_active_profile';
+
+  function listProfiles() {
+    try { return JSON.parse(localStorage.getItem(PROFILES_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+
+  function getActiveProfileName() {
+    return localStorage.getItem(ACTIVE_PROFILE_KEY) || '';
+  }
+
+  function saveProfile(name) {
+    if (!name || !name.trim()) return false;
+    name = name.trim();
+    if (!isCalibrated()) return false;
+    const profiles = listProfiles().filter(p => p.name !== name);
+    profiles.push({ name, points: points.slice(), createdAt: Date.now() });
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+    localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+    return true;
+  }
+
+  function loadProfile(name) {
+    const profiles = listProfiles();
+    const p = profiles.find(x => x.name === name);
+    if (!p) return false;
+    points = p.points.slice();
+    localStorage.setItem(POINTS_KEY, JSON.stringify(points));
+    localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+    return true;
+  }
+
+  function deleteProfile(name) {
+    const profiles = listProfiles().filter(p => p.name !== name);
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+    if (getActiveProfileName() === name) {
+      localStorage.removeItem(ACTIVE_PROFILE_KEY);
+    }
+  }
+
+  function renderProfilesUI() {
+    const list = document.getElementById('profiles-list');
+    if (!list) return;
+    const profiles = listProfiles();
+    const active = getActiveProfileName();
+    if (profiles.length === 0) {
+      list.innerHTML = '<div class="setting-hint">Aucun profil enregistré. Calibrez, puis touchez "Sauvegarder sous…" ci-dessus.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    profiles.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'profile-row' + (p.name === active ? ' active' : '');
+      row.innerHTML = `
+        <span class="profile-name"></span>
+        <button class="fav-btn" data-act="load">Charger</button>
+        <button class="fav-btn del" data-act="del">🗑</button>
+      `;
+      row.querySelector('.profile-name').textContent = p.name + (p.name === active ? ' ✓' : '');
+      row.querySelector('[data-act="load"]').onclick = () => {
+        if (loadProfile(p.name) && window.App) {
+          App.setStatus('blue', `Profil "${p.name}" chargé`);
+          renderProfilesUI();
+        }
+      };
+      row.querySelector('[data-act="del"]').onclick = () => {
+        if (confirm(`Supprimer le profil "${p.name}" ?`)) {
+          deleteProfile(p.name);
+          renderProfilesUI();
+        }
+      };
+      list.appendChild(row);
+    });
+  }
+
+  function promptAndSaveProfile() {
+    if (!isCalibrated()) {
+      alert('Calibrez d\'abord les 4 coins du tableau avant de sauvegarder un profil.');
+      return;
+    }
+    const name = prompt('Nom du profil (ex: "Caméra fixe", "iPhone") :', getActiveProfileName() || '');
+    if (name && saveProfile(name)) {
+      renderProfilesUI();
+      if (window.App) App.setStatus('blue', `Profil "${name}" sauvegardé`);
+    }
+  }
+
   function reset() {
     stopLive();
     points = [];
@@ -537,6 +628,8 @@ window.Calibration = (function() {
 
   return {
     load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
-    recordPair, getLearnedOffset, resetOffsetLearning, initLabel
+    recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
+    listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
+    renderProfilesUI, promptAndSaveProfile
   };
 })();

@@ -316,6 +316,65 @@ body {
 .status-dot.red { background: var(--red); }
 .status-dot.blue { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
 
+/* FOOT INDICATOR BADGE (visible during camera mode) */
+.foot-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 6px 10px;
+  border-radius: 18px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'DM Mono', monospace;
+  color: #fff;
+  background: rgba(0,0,0,0.6);
+  border: 2px solid var(--orange);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 5;
+  pointer-events: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.foot-badge.detected {
+  border-color: var(--green);
+  background: rgba(29,158,117,0.85);
+  animation: footPulse 1.2s ease-in-out infinite;
+}
+.foot-badge.lost { border-color: var(--red); }
+.foot-badge-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 8px currentColor;
+}
+.foot-badge.detected .foot-badge-dot { background: #fff; }
+.foot-badge.lost .foot-badge-dot { background: var(--red); }
+@keyframes footPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(29,158,117,0.7); }
+  50% { box-shadow: 0 0 0 8px rgba(29,158,117,0); }
+}
+
+/* PROFIL CALIBRATION (dans settings) */
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.profile-row.active { border-color: var(--green); }
+.profile-name {
+  flex: 1;
+  font-size: 13px;
+  font-family: 'DM Mono', monospace;
+  word-break: break-word;
+}
+
 /* DWELL BAR */
 .dwell-wrap {
   height: 4px;
