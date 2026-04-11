@@ -300,10 +300,10 @@ window.Camera = (function() {
       }
       setDetectionState('detected');
 
-      // Dessin curseur
+      // Dessin curseur vert = position brute du pied détecté
       ctx.beginPath();
-      ctx.arc(footPos.x * c.width, footPos.y * c.height, 16, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(29,158,117,0.6)';
+      ctx.arc(footPos.x * c.width, footPos.y * c.height, 14, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(29,158,117,0.55)';
       ctx.fill();
       ctx.strokeStyle = 'white';
       ctx.lineWidth = 2;
@@ -330,10 +330,66 @@ window.Camera = (function() {
       };
       lastFootUVBoard = uv;
       const cell = getCellAtBoardUV(corrected);
+
+      // ═══ POINT ROUGE : endroit réellement sélectionné ═══
+      // On mappe le UV corrigé (dans le tableau) vers la caméra via
+      // bilinéaire forward, pour visualiser exactement où le système
+      // pense que le pied pointe (après application de l'offset vertical).
+      const targetCam = boardUVToCam(corrected);
+      if (targetCam) {
+        // Ligne pointillée entre pied brut et point de sélection
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(231,76,60,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(footPos.x * c.width, footPos.y * c.height);
+        ctx.lineTo(targetCam.x * c.width, targetCam.y * c.height);
+        ctx.stroke();
+        ctx.restore();
+
+        // Point rouge pulsant + croix centrale
+        const tx = targetCam.x * c.width;
+        const ty = targetCam.y * c.height;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 18, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(231,76,60,0.3)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(tx, ty, 10, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(231,76,60,0.9)';
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        // Petite croix blanche au centre
+        ctx.beginPath();
+        ctx.moveTo(tx - 5, ty);
+        ctx.lineTo(tx + 5, ty);
+        ctx.moveTo(tx, ty - 5);
+        ctx.lineTo(tx, ty + 5);
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
       handleDwell(cell);
     } finally {
       if (detectActive) animFrame = requestAnimationFrame(detectLoop);
     }
+  }
+
+  /** Mapping forward : UV tableau → position caméra normalisée [0,1].
+   *  Inverse du camToBoardUV (interpolation bilinéaire directe). */
+  function boardUVToCam(uv) {
+    const pts = Calibration.getPoints();
+    if (!pts || pts.length < 4) return null;
+    const [TL, TR, BL, BR] = pts;
+    const u = uv.u, v = uv.v;
+    return {
+      x: (1 - v) * ((1 - u) * TL.x + u * TR.x) + v * ((1 - u) * BL.x + u * BR.x),
+      y: (1 - v) * ((1 - u) * TL.y + u * TR.y) + v * ((1 - u) * BL.y + u * BR.y)
+    };
   }
 
   /** Détection par pixels : trouve la plus grande zone qui "diffère de l'arrière-plan"
