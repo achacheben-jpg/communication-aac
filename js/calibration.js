@@ -13,6 +13,10 @@ window.Calibration = (function() {
   let points = [];
   let step = 0;
   let state = 'idle'; // idle | streaming | tapping | done
+  // Détection automatique continue
+  let liveActive = false;
+  let liveTimer = null;
+  let liveLockedByUser = false; // true dès que l'utilisateur tap manuellement
 
   function load() {
     try {
@@ -25,9 +29,11 @@ window.Calibration = (function() {
   function getPoints() { return points; }
 
   function reset() {
+    stopLive();
     points = [];
     step = 0;
     state = 'idle';
+    liveLockedByUser = false;
     for (let i = 0; i < 4; i++) {
       const d = document.getElementById('dot-' + i);
       if (d) d.className = 'step-dot';
@@ -56,57 +62,102 @@ window.Calibration = (function() {
       v.srcObject = stream;
       await v.play();
       state = 'streaming';
-      document.getElementById('calib-msg').innerHTML =
-        'Caméra active. Cadrez le tableau entier.<br>L\'<b>auto-détection</b> va tenter de trouver les 4 coins. En cas d\'échec, touchez directement chaque coin sur l\'écran.';
-      document.getElementById('calib-action-btn').textContent = '⚡ Auto-détecter';
+      liveLockedByUser = false;
+      setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez le tableau entier, bien éclairé. Le cadre vert s\'affichera dès qu\'il est détecté.');
+      const btn = document.getElementById('calib-action-btn');
+      if (btn) { btn.textContent = 'Utiliser →'; btn.disabled = true; btn.style.opacity = '0.5'; }
       showAutoBtn(true);
 
       // Dimensionner le canvas pour qu'il corresponde à la taille CSS affichée
-      // (important : on dessine en coordonnées CSS, pas en pixels vidéo intrinsèques)
       await new Promise(r => requestAnimationFrame(r));
-      const c = document.getElementById('canvas-calib');
-      const rect = v.getBoundingClientRect();
-      c.width = Math.max(1, Math.round(rect.width));
-      c.height = Math.max(1, Math.round(rect.height));
+      sizeCanvasToVideo();
 
-      arm();
+      // Dès que la vidéo est dimensionnée, re-dimensionner le canvas
+      if (v && !v._resizeHooked) {
+        v._resizeHooked = true;
+        v.addEventListener('loadedmetadata', sizeCanvasToVideo);
+        window.addEventListener('resize', sizeCanvasToVideo);
+      }
 
-      // Tentative automatique 1.2 s après le démarrage pour laisser l'exposition
-      // se stabiliser. L'utilisateur peut toujours re-déclencher ou taper manuellement.
-      setTimeout(() => {
-        if (state === 'streaming' || state === 'tapping') auto();
-      }, 1200);
+      // Armer le tap manuel comme fallback (mais il ne s'active que sur tap réel)
+      armManual();
+
+      // Démarrer la détection en continu
+      startLive();
 
     } catch (e) {
-      document.getElementById('calib-msg').innerHTML =
-        `<span style="color:#e74c3c">Erreur caméra : ${e.message}</span>`;
+      console.error('[calib] camera error', e);
+      setCalibMsg(`<span style="color:#e74c3c">Erreur caméra : ${e.message}. Vérifiez les permissions.</span>`);
     }
+  }
+
+  function sizeCanvasToVideo() {
+    const v = document.getElementById('video-calib');
+    const c = document.getElementById('canvas-calib');
+    if (!v || !c) return;
+    const rect = v.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      c.width = Math.round(rect.width);
+      c.height = Math.round(rect.height);
+    }
+  }
+
+  function setCalibMsg(html) {
+    const m = document.getElementById('calib-msg');
+    if (m) m.innerHTML = html;
+  }
+
+  function setActionEnabled(enabled) {
+    const btn = document.getElementById('calib-action-btn');
+    if (!btn) return;
+    btn.disabled = !enabled;
+    btn.style.opacity = enabled ? '1' : '0.5';
   }
 
   function action() {
     if (state === 'idle') { startCam(); return; }
     if (state === 'done') {
+      stopLive();
       stopCam();
       save();
       if (window.App) App.goMain('camera');
       return;
     }
-    // streaming / tapping : le bouton principal déclenche l'auto-détection
+    // streaming / tapping : forcer une nouvelle tentative auto
     auto();
   }
 
-  function arm() {
+  /** Arme uniquement l'écoute du tap manuel comme fallback.
+   *  N'enclenche pas l'état 'tapping' : cela se fera au premier tap réel. */
+  function armManual() {
     const canvas = document.getElementById('canvas-calib');
     if (!canvas) return;
     canvas.style.cursor = 'crosshair';
     canvas.ontouchend = canvas.onclick = handleTap;
-    state = 'tapping';
-    document.getElementById('dot-' + step).className = 'step-dot current';
   }
 
   function handleTap(e) {
     e.preventDefault();
+    // Dès qu'on tape manuellement, on reprend le contrôle : stop live auto
+    liveLockedByUser = true;
+    stopLive();
+
     const canvas = document.getElementById('canvas-calib');
+    const ctx = canvas.getContext('2d');
+
+    // Si on était en état 'done' (via live auto), repartir de zéro en manuel
+    if (state === 'done' || step === 4) {
+      points = [];
+      step = 0;
+      for (let i = 0; i < 4; i++) {
+        const d = document.getElementById('dot-' + i);
+        if (d) d.className = 'step-dot';
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      setActionEnabled(false);
+    }
+    state = 'tapping';
+
     const rect = canvas.getBoundingClientRect();
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
@@ -114,25 +165,21 @@ window.Calibration = (function() {
     const ny = (clientY - rect.top) / rect.height;
 
     points.push({ x: nx, y: ny });
-    const ctx = canvas.getContext('2d');
     drawPoint(ctx, clientX - rect.left, clientY - rect.top, step + 1);
 
     document.getElementById('dot-' + step).className = 'step-dot done';
     step++;
 
-    canvas.ontouchend = canvas.onclick = null;
-    canvas.style.cursor = 'default';
-
     if (step < 4) {
-      document.getElementById('calib-msg').innerHTML =
-        `✅ Coin ${step} enregistré !<br>Maintenant : <b>${CORNERS[step]}</b> — touchez ce coin.`;
-      document.getElementById('calib-action-btn').textContent = `Coin ${step + 1} : ${CORNERS[step]}`;
-      arm();
+      setCalibMsg(`✅ Coin ${step}/4 enregistré. Touchez <b>${CORNERS[step]}</b> à l'écran.`);
+      const d = document.getElementById('dot-' + step);
+      if (d) d.className = 'step-dot current';
     } else {
       state = 'done';
-      document.getElementById('calib-msg').innerHTML =
-        '✅ <b>Calibration terminée !</b> Les 4 coins sont enregistrés.';
-      document.getElementById('calib-action-btn').textContent = 'Utiliser le tableau →';
+      setCalibMsg('✅ <b>4 coins enregistrés manuellement</b>. Touchez <b>Utiliser →</b>.');
+      const btn = document.getElementById('calib-action-btn');
+      if (btn) btn.textContent = 'Utiliser →';
+      setActionEnabled(true);
     }
   }
 
@@ -152,6 +199,7 @@ window.Calibration = (function() {
   }
 
   function stopCam() {
+    stopLive();
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
@@ -175,50 +223,65 @@ window.Calibration = (function() {
   // extrêmes de (x+y) et (x-y), ce qui fonctionne aussi quand le tableau
   // est légèrement incliné.
 
-  function auto() {
+  /** Lance la boucle de détection continue (~400 ms) */
+  function startLive() {
+    stopLive();
+    liveActive = true;
+    tickLive();
+  }
+
+  function stopLive() {
+    liveActive = false;
+    if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  }
+
+  function tickLive() {
+    if (!liveActive) return;
+    try { runLiveFrame(); }
+    catch (e) { console.warn('[calib] live frame error', e); }
+    liveTimer = setTimeout(tickLive, 400);
+  }
+
+  function runLiveFrame() {
+    if (liveLockedByUser) return;
     const v = document.getElementById('video-calib');
-    if (!v || v.readyState < 2) {
-      flashMsg('Caméra non prête, réessayez dans un instant.', true);
+    if (!v || v.readyState < 2 || !v.videoWidth) {
+      setCalibMsg('⏳ <b>Initialisation de la caméra…</b>');
       return;
     }
     const detected = detectBoardCorners(v);
-    if (!detected) {
-      flashMsg('Tableau non détecté — vérifiez l\'éclairage et le cadrage, ou touchez les 4 coins manuellement.', true);
-      return;
+    if (detected) {
+      points = detected;
+      step = 4;
+      state = 'done';
+      for (let i = 0; i < 4; i++) {
+        const d = document.getElementById('dot-' + i);
+        if (d) d.className = 'step-dot done';
+      }
+      drawPreviewQuad(detected);
+      setCalibMsg('✅ <b>Tableau détecté !</b> Vérifiez la zone verte et touchez <b>Utiliser →</b>. Bougez la caméra pour re-détecter si besoin.');
+      const btn = document.getElementById('calib-action-btn');
+      if (btn) btn.textContent = 'Utiliser →';
+      setActionEnabled(true);
+    } else {
+      // Pas trouvé : on garde une détection précédente si elle existe
+      if (state !== 'done') {
+        setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez-le entièrement. Un cadre vert s\'affichera dès qu\'il est détecté.');
+        setActionEnabled(false);
+      }
     }
-
-    // Appliquer la détection
-    points = detected;
-    step = 4;
-    state = 'done';
-    for (let i = 0; i < 4; i++) {
-      const d = document.getElementById('dot-' + i);
-      if (d) d.className = 'step-dot done';
-    }
-
-    // Désarmer le tap manuel (mais laisser le bouton Auto disponible pour ré-essayer)
-    const canvas = document.getElementById('canvas-calib');
-    if (canvas) {
-      canvas.ontouchend = canvas.onclick = null;
-      canvas.style.cursor = 'default';
-    }
-
-    drawPreviewQuad(detected);
-
-    const msg = document.getElementById('calib-msg');
-    if (msg) msg.innerHTML =
-      '✅ <b>Auto-détection réussie</b> — 4 coins trouvés. Vérifiez la superposition verte et touchez <b>Utiliser →</b>. Relancez <b>⚡ Auto</b> pour re-détecter.';
-    const btn = document.getElementById('calib-action-btn');
-    if (btn) btn.textContent = 'Utiliser →';
   }
 
-  function flashMsg(text, isError) {
-    const msg = document.getElementById('calib-msg');
-    if (!msg) return;
-    msg.innerHTML = isError
-      ? `<span style="color:var(--orange)">${text}</span>`
-      : text;
+  /** Bouton "⚡ Auto" : force une nouvelle analyse immédiate (one-shot) */
+  function auto() {
+    liveLockedByUser = false;
+    if (!liveActive) startLive();
+    // Et on déclenche une frame tout de suite
+    try { runLiveFrame(); } catch (e) { console.warn('[calib] auto manual trigger error', e); }
   }
+
+  // Compteur pour debug (affiche dans la console toutes les N frames)
+  let _detectCounter = 0;
 
   /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
    *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
@@ -226,36 +289,42 @@ window.Calibration = (function() {
   function detectBoardCorners(video) {
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 360;
-    const W = 240;
-    const H = Math.max(90, Math.round(W * vh / vw));
+    const W = 200;
+    const H = Math.max(80, Math.round(W * vh / vw));
 
     const cvs = document.createElement('canvas');
     cvs.width = W;
     cvs.height = H;
-    const ctx = cvs.getContext('2d');
+    const ctx = cvs.getContext('2d', { willReadFrequently: true });
     try {
       ctx.drawImage(video, 0, 0, W, H);
-    } catch (e) { return null; }
+    } catch (e) { console.warn('[calib] drawImage failed', e); return null; }
     let data;
     try { data = ctx.getImageData(0, 0, W, H).data; }
-    catch (e) { return null; }
+    catch (e) { console.warn('[calib] getImageData failed', e); return null; }
 
-    // 1) Masque de saturation : pixels colorés = probablement tableau
+    // 1) Masque de saturation : pixels colorés = probablement tableau.
+    //    Seuil à 0.22 (plus permissif) pour attraper des couleurs atténuées.
     const mask = new Uint8Array(W * H);
     let maskCount = 0;
     for (let i = 0; i < W * H; i++) {
       const j = i * 4;
       const r = data[j], g = data[j + 1], b = data[j + 2];
-      const maxC = Math.max(r, g, b);
-      if (maxC < 45) continue; // trop sombre
-      const minC = Math.min(r, g, b);
+      const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      if (maxC < 40) continue; // trop sombre
+      const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
       const sat = (maxC - minC) / maxC;
-      if (sat > 0.3) {
+      if (sat > 0.22) {
         mask[i] = 1;
         maskCount++;
       }
     }
-    if (maskCount < W * H * 0.02) return null;
+
+    const debug = (++_detectCounter % 10 === 0);
+    if (maskCount < W * H * 0.015) {
+      if (debug) console.log('[calib] no colorful pixels', { maskCount, pct: (maskCount / (W * H) * 100).toFixed(1) + '%' });
+      return null;
+    }
 
     // 2) Plus grande composante connexe (BFS itératif, 4-connectivité)
     const visited = new Uint8Array(W * H);
@@ -293,7 +362,10 @@ window.Calibration = (function() {
       if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
     }
 
-    if (!bestComp || bestSize < W * H * 0.015) return null;
+    if (!bestComp || bestSize < W * H * 0.008) {
+      if (debug) console.log('[calib] component too small', { bestSize, pct: (bestSize / (W * H) * 100).toFixed(1) + '%' });
+      return null;
+    }
 
     // 3) Extraire les 4 coins extrêmes
     let tlS = Infinity, brS = -Infinity, trS = -Infinity, blS = Infinity;
@@ -315,17 +387,26 @@ window.Calibration = (function() {
       if (y > maxY) maxY = y;
     }
 
-    // 4) Sanity checks
+    // 4) Sanity checks (plus permissifs)
     const bboxW = maxX - minX + 1;
     const bboxH = maxY - minY + 1;
-    if (bboxW < W * 0.18 || bboxH < H * 0.18) return null;
+    if (bboxW < W * 0.12 || bboxH < H * 0.12) {
+      if (debug) console.log('[calib] bbox too small', { bboxW, bboxH });
+      return null;
+    }
     const ar = bboxW / bboxH;
-    if (ar < 0.4 || ar > 3.0) return null;
+    if (ar < 0.25 || ar > 4.5) {
+      if (debug) console.log('[calib] aspect ratio off', { ar: ar.toFixed(2) });
+      return null;
+    }
 
-    // Les 4 coins doivent être distincts (au moins 4 px d'écart deux à deux)
-    const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
-    if (dist(tlX, tlY, trX, trY) < 4) return null;
-    if (dist(blX, blY, brX, brY) < 4) return null;
+    if (debug) {
+      console.log('[calib] ✓ detected', {
+        size: (bestSize / (W * H) * 100).toFixed(1) + '%',
+        bbox: bboxW + 'x' + bboxH,
+        ar: ar.toFixed(2)
+      });
+    }
 
     return [
       { x: tlX / W, y: tlY / H },
