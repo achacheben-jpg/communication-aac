@@ -47,13 +47,30 @@ window.Camera = (function() {
     document.getElementById('dwell-wrap').classList.add('visible');
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } },
-        audio: false
-      });
       const v = document.getElementById('video-live');
-      v.srcObject = stream;
-      await v.play();
+      // Source : fichier vidéo chargé OU caméra live
+      if (window.VideoSource && VideoSource.has()) {
+        v.srcObject = null;
+        v.src = VideoSource.url();
+        v.loop = false;
+        v.muted = false;          // garder le son de la vidéo si présent
+        v.playsInline = true;
+        v.currentTime = 0;
+        // Quand la vidéo se termine, afficher la transcription
+        v.onended = onVideoEnded;
+        await v.play();
+        if (window.VideoSource.resetTranscript) VideoSource.resetTranscript();
+        if (window.App) App.clearAll && App.clearAll();
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 } },
+          audio: false
+        });
+        v.srcObject = stream;
+        v.src = '';
+        v.onended = null;
+        await v.play();
+      }
 
       detectActive = true;
       setDetectionState('searching');
@@ -87,7 +104,11 @@ window.Camera = (function() {
         usePoseModel = false;
         if (window.App) App.setStatus('orange', 'Caméra fixe — cherche le pied');
         // Capturer une image de fond (sans pied) après 1s pour background subtraction
-        captureBackgroundAfter(1200);
+        // On ne fait ça QUE pour une vraie caméra live : pour une vidéo chargée,
+        // le premier frame contient probablement déjà le pied en action.
+        if (!(window.VideoSource && VideoSource.has())) {
+          captureBackgroundAfter(1200);
+        }
       }
 
       detectLoop();
@@ -101,6 +122,11 @@ window.Camera = (function() {
     detectActive = false;
     if (animFrame) cancelAnimationFrame(animFrame);
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    const v = document.getElementById('video-live');
+    if (v) {
+      try { v.pause(); } catch (e) {}
+      v.onended = null;
+    }
     document.getElementById('camera-live-wrap').classList.remove('visible');
     document.getElementById('dwell-wrap').classList.remove('visible');
     if (window.App) App.setStatus('', 'Mode manuel');
@@ -109,6 +135,16 @@ window.Camera = (function() {
     lastFootUVBoard = null;
     bgFrame = null;
     setDetectionState('idle');
+  }
+
+  function onVideoEnded() {
+    console.log('[camera] video ended, showing transcription');
+    detectActive = false;
+    if (animFrame) cancelAnimationFrame(animFrame);
+    clearDwell();
+    if (window.App && App.showTranscriptResult) {
+      App.showTranscriptResult();
+    }
   }
 
   function setDetectionState(s) {

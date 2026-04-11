@@ -145,13 +145,28 @@ window.Calibration = (function() {
 
   async function startCam() {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
       const v = document.getElementById('video-calib');
-      v.srcObject = stream;
-      await v.play();
+      // Source : fichier vidéo chargé OU caméra live
+      if (window.VideoSource && VideoSource.has()) {
+        v.srcObject = null;
+        v.src = VideoSource.url();
+        v.loop = false;
+        v.muted = true;
+        v.playsInline = true;
+        await v.play();
+        // Avancer de 0.5s pour avoir un vrai frame à analyser
+        try {
+          v.currentTime = Math.min(0.5, v.duration * 0.1 || 0.5);
+        } catch (e) {}
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        v.srcObject = stream;
+        v.src = '';
+        await v.play();
+      }
       state = 'streaming';
       liveLockedByUser = false;
       setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez le tableau entier, bien éclairé. Le cadre vert s\'affichera dès qu\'il est détecté.');
@@ -294,6 +309,11 @@ window.Calibration = (function() {
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
+    }
+    // Si on était sur un fichier vidéo, pause (mais ne clear pas la source)
+    const v = document.getElementById('video-calib');
+    if (v && v.src && !v.srcObject) {
+      try { v.pause(); } catch (e) {}
     }
   }
 

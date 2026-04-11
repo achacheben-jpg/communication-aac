@@ -1,7 +1,7 @@
 // Service Worker — cache offline-first
 // IMPORTANT : bumper CACHE_VERSION à chaque déploiement pour invalider
 // l'ancien cache sur les clients installés.
-const CACHE_VERSION = 'aac-v6-source-voix-profils';
+const CACHE_VERSION = 'aac-v7-video-upload';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,8 @@ const CORE_ASSETS = [
   './js/history.js',
   './js/calibration.js',
   './js/camera.js',
-  './js/scan.js'
+  './js/scan.js',
+  './js/videosource.js'
 ];
 
 self.addEventListener('install', (event) => {
