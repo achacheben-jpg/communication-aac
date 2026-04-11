@@ -22,6 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v5 · auto-calib live</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -328,10 +329,23 @@
 
 <!-- MediaPipe Pose (chargé uniquement si besoin) -->
 <script>
-  // Service worker registration (offline)
+  // Service worker registration (offline) + auto-update
   if ('serviceWorker' in navigator) {
+    // Recharge la page quand un nouveau SW prend la main (évite d'afficher l'ancienne version en cache)
+    let reloadingOnce = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadingOnce) return;
+      reloadingOnce = true;
+      console.log('[sw] controllerchange → reloading');
+      window.location.reload();
+    });
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+        .then((reg) => {
+          console.log('[sw] registered, scope:', reg.scope);
+          reg.update().catch(() => {});
+        })
+        .catch((err) => console.warn('[sw] register failed:', err));
     });
   }
 </script>
