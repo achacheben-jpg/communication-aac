@@ -1,7 +1,7 @@
 // Service Worker — cache offline-first
 // IMPORTANT : bumper CACHE_VERSION à chaque déploiement pour invalider
 // l'ancien cache sur les clients installés.
-const CACHE_VERSION = 'aac-v8-red-target';
+const CACHE_VERSION = 'aac-v9-training';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -15,7 +15,8 @@ const CORE_ASSETS = [
   './js/calibration.js',
   './js/camera.js',
   './js/scan.js',
-  './js/videosource.js'
+  './js/videosource.js',
+  './js/training.js'
 ];
 
 self.addEventListener('install', (event) => {

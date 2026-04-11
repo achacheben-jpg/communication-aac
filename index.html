@@ -22,17 +22,19 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v8 · point rouge sélection</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v9 · apprentissage vidéo</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
     <button class="btn-secondary" onclick="App.goMain('manual')">✋ Mode manuel uniquement</button>
     <button class="btn-secondary" onclick="App.goMain('scan')">🔊 Mode scan (son)</button>
     <button class="btn-secondary" onclick="App.pickVideoFile()">🎬 Analyser une vidéo</button>
+    <button class="btn-secondary" onclick="App.showScreen('training')">🧠 Apprentissage</button>
     <button class="btn-ghost" onclick="App.showScreen('favorites'); Favorites.render();">★ Favoris</button>
   </div>
   <!-- Hidden file input pour l'upload vidéo -->
   <input type="file" id="video-file-input" accept="video/*" style="display:none" onchange="App.onVideoFileSelected(event)">
+  <input type="file" id="training-file-input" accept="video/*" style="display:none" onchange="App.onTrainingFileSelected(event)">
 </div>
 
 <!-- ══════════════════════════════════════
@@ -366,6 +368,54 @@
 </div>
 
 <!-- ══════════════════════════════════════
+     ÉCRAN : APPRENTISSAGE (supervisé sur vidéo)
+══════════════════════════════════════ -->
+<div id="screen-training" class="screen">
+  <div class="fav-header">
+    <button onclick="App.showScreen('home')">←</button>
+    <h2>🧠 Apprentissage</h2>
+  </div>
+  <div class="training-body">
+    <div class="training-step">
+      <div class="training-step-title">1. Calibration requise</div>
+      <div class="setting-hint" id="training-calib-status">Vérification…</div>
+    </div>
+
+    <div class="training-step">
+      <div class="training-step-title">2. Charger une vidéo test</div>
+      <button class="btn-secondary" onclick="App.pickTrainingFile()">🎬 Choisir une vidéo</button>
+      <div class="setting-hint" id="training-file-status">Aucune vidéo chargée</div>
+    </div>
+
+    <div class="training-step">
+      <div class="training-step-title">3. Texte attendu (ce que la personne a écrit dans la vidéo)</div>
+      <textarea id="training-target" class="setting-input" rows="4" placeholder="Ex: bonjour comment ça va"></textarea>
+    </div>
+
+    <div class="training-step">
+      <button class="btn-primary" id="training-start-btn" onclick="App.startTraining()">🧠 Lancer l'apprentissage</button>
+    </div>
+
+    <div class="training-step" id="training-progress-wrap" style="display:none">
+      <div class="training-step-title">Analyse en cours</div>
+      <div class="training-progress-bar"><div id="training-progress-fill"></div></div>
+      <div class="setting-hint" id="training-status-text">Initialisation…</div>
+    </div>
+
+    <div class="training-step" id="training-results" style="display:none">
+      <div class="training-step-title">Résultats</div>
+      <div class="training-kpi" id="training-accuracy">—</div>
+      <div class="training-transcripts">
+        <div><b>Obtenu :</b> <span id="training-got"></span></div>
+        <div><b>Attendu :</b> <span id="training-want"></span></div>
+      </div>
+      <div class="training-params" id="training-params"></div>
+      <button class="btn-primary" onclick="App.applyTraining()">✓ Appliquer ces paramètres</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
      ÉCRAN : TRANSCRIPTION (résultat vidéo)
 ══════════════════════════════════════ -->
 <div id="screen-transcript" class="screen">
@@ -425,6 +475,7 @@
 <script src="js/calibration.js"></script>
 <script src="js/camera.js"></script>
 <script src="js/scan.js"></script>
+<script src="js/training.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
