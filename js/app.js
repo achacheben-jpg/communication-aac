@@ -150,6 +150,75 @@ window.App = (function() {
   }
 
   // ═══════════════════════════════════════════
+  // ANALYSE D'UNE VIDÉO PRÉ-ENREGISTRÉE
+  // ═══════════════════════════════════════════
+  function pickVideoFile() {
+    const inp = document.getElementById('video-file-input');
+    if (inp) inp.click();
+  }
+
+  function onVideoFileSelected(e) {
+    const file = e && e.target && e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!window.VideoSource) return;
+    VideoSource.set(file);
+    clearAll();
+    setStatus('blue', `Vidéo "${VideoSource.name()}" chargée — calibration…`);
+    // Aller à la calibration en utilisant la vidéo comme source
+    goCalib();
+    // Reset l'input pour pouvoir re-sélectionner le même fichier plus tard
+    e.target.value = '';
+  }
+
+  /** Relance la vidéo depuis le début (sans recharger) */
+  function replayVideo() {
+    if (!window.VideoSource || !VideoSource.has()) return;
+    if (VideoSource.resetTranscript) VideoSource.resetTranscript();
+    clearAll();
+    goMain('camera');
+  }
+
+  /** Appelée par Camera quand la vidéo chargée se termine */
+  function showTranscriptResult() {
+    const metaEl = document.getElementById('transcript-meta');
+    const textEl = document.getElementById('transcript-text');
+    if (metaEl) {
+      const name = (window.VideoSource && VideoSource.has()) ? VideoSource.name() : '';
+      metaEl.textContent = name ? `Source : ${name}` : '';
+    }
+    if (textEl) {
+      const t = txt.trim();
+      textEl.textContent = t || '(aucun texte détecté — vérifie la calibration et le seuil de dwell)';
+    }
+    showScreen('transcript');
+    // Stopper le mode caméra (la vidéo est déjà finie)
+    if (currentMode === 'camera') {
+      currentMode = 'manual';
+      if (window.Camera) Camera.stop();
+    }
+  }
+
+  function closeTranscript() {
+    // Retour à l'accueil et clear de la vidéo
+    if (window.VideoSource) VideoSource.clear();
+    showScreen('home');
+  }
+
+  function copyTranscript() {
+    const text = (txt || '').trim();
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => setStatus('blue', '✓ Copié dans le presse-papier'))
+        .catch(() => setStatus('orange', 'Copie échouée'));
+    }
+  }
+
+  function speakTranscript() {
+    speak();
+  }
+
+  // ═══════════════════════════════════════════
   // MODE (manuel / caméra / scan)
   // ═══════════════════════════════════════════
   function setMode(m) {
@@ -222,6 +291,8 @@ window.App = (function() {
     setSpeakOnSelect: (v) => setSetting(SPEAK_SELECT_KEY, v),
     setSpeakOnWord: (v) => setSetting(SPEAK_WORD_KEY, v),
     setSpeakOnSentence: (v) => setSetting(SPEAK_SENTENCE_KEY, v),
-    speakSnippet
+    speakSnippet,
+    pickVideoFile, onVideoFileSelected, replayVideo,
+    showTranscriptResult, closeTranscript, copyTranscript, speakTranscript
   };
 })();

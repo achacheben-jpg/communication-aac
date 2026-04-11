@@ -22,14 +22,17 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v6 · source caméra · voix auto · profils</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v7 · analyse vidéo</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
     <button class="btn-secondary" onclick="App.goMain('manual')">✋ Mode manuel uniquement</button>
     <button class="btn-secondary" onclick="App.goMain('scan')">🔊 Mode scan (son)</button>
+    <button class="btn-secondary" onclick="App.pickVideoFile()">🎬 Analyser une vidéo</button>
     <button class="btn-ghost" onclick="App.showScreen('favorites'); Favorites.render();">★ Favoris</button>
   </div>
+  <!-- Hidden file input pour l'upload vidéo -->
+  <input type="file" id="video-file-input" accept="video/*" style="display:none" onchange="App.onVideoFileSelected(event)">
 </div>
 
 <!-- ══════════════════════════════════════
@@ -363,7 +366,26 @@
 </div>
 
 <!-- ══════════════════════════════════════
-     ÉCRAN 4 : FAVORIS
+     ÉCRAN : TRANSCRIPTION (résultat vidéo)
+══════════════════════════════════════ -->
+<div id="screen-transcript" class="screen">
+  <div class="fav-header">
+    <button onclick="App.closeTranscript()">←</button>
+    <h2>📝 Transcription</h2>
+  </div>
+  <div class="transcript-body">
+    <div class="transcript-meta" id="transcript-meta"></div>
+    <div class="transcript-text" id="transcript-text">(rien)</div>
+  </div>
+  <div class="transcript-actions">
+    <button class="btn-secondary" onclick="App.copyTranscript()">📋 Copier</button>
+    <button class="btn-secondary" onclick="App.replayVideo()">⏮ Relancer</button>
+    <button class="btn-primary" onclick="App.speakTranscript()">▶ Lire à voix haute</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     ÉCRAN : FAVORIS
 ══════════════════════════════════════ -->
 <div id="screen-favorites" class="screen">
   <div class="fav-header">
@@ -397,6 +419,7 @@
 </script>
 
 <script src="js/tableau.js"></script>
+<script src="js/videosource.js"></script>
 <script src="js/history.js"></script>
 <script src="js/prediction.js"></script>
 <script src="js/calibration.js"></script>
