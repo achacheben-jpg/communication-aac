@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Tableau de communication</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 10px; }
+
+.output-zone {
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+#out { font-size: 22px; font-weight: 500; flex:1; min-width:120px; word-break:break-all; color:#111; }
+.bspeak { background:#1D9E75; color:white; border:none; border-radius:6px; padding:8px 16px; font-size:14px; font-weight:500; cursor:pointer; }
+.bclear { background:#fff; color:#555; border:1px solid #ccc; border-radius:6px; padding:8px 12px; font-size:13px; cursor:pointer; }
+.bback  { background:#fff; color:#D85A30; border:1px solid #ccc; border-radius:6px; padding:8px 12px; font-size:13px; cursor:pointer; font-weight:500; }
+
+/* =============================================
+   TABLEAU PRINCIPAL
+   Modifier ici les grid-template-rows pour ajuster les hauteurs
+   Modifier grid-template-columns pour ajuster les largeurs
+   ============================================= */
+.tb {
+  display: grid;
+  grid-template-columns: 26px 44px 1fr 54px;
+  /* Hauteur de chaque ligne 0 à 9 */
+  grid-template-rows:
+    42px  /* Ligne 0 */
+    34px  /* Ligne 1 */
+    34px  /* Ligne 2 */
+    34px  /* Ligne 3 */
+    34px  /* Ligne 4 */
+    34px  /* Ligne 5 */
+    34px  /* Ligne 6 */
+    34px  /* Ligne 7 */
+    34px  /* Ligne 8 */
+    34px  /* Ligne 9 */
+  ;
+  gap: 2px;
+  background: #2471a3;
+  border: 3px solid #c0392b;
+  border-radius: 3px;
+  padding: 2px;
+}
+
+.c {
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; cursor: pointer; user-select: none;
+  padding: 2px 3px; line-height: 1.1; border-radius: 1px;
+  transition: filter 0.1s;
+}
+.c:active { filter: brightness(0.7); }
+.nc { cursor: default !important; }
+
+/* === COULEURS === */
+.bl  { background:#2980b9; color:white; }   /* bleu */
+.yw  { background:#f0c030; color:#111; }    /* jaune */
+.wh  { background:#efefef; color:#111; }    /* blanc/gris clair */
+.num { background:#888;    color:white; font-size:12px; font-weight:600; cursor:default; } /* numéro */
+
+/* === TAILLES DE TEXTE === */
+.fxxl { font-size:22px; font-weight:900; }
+.fxl  { font-size:18px; font-weight:700; }
+.flg  { font-size:14px; font-weight:600; }
+.fmd  { font-size:11px; font-weight:500; }
+.fxs  { font-size:9px;  font-weight:400; }
+
+.inner { display:grid; gap:2px; width:100%; height:100%; }
+
+.speed-row {
+  display:flex; align-items:center; gap:8px;
+  margin-top:8px; font-size:12px; color:#555; justify-content:flex-end;
+}
+</style>
+</head>
+<body>
+
+<div class="output-zone">
+  <div id="out"><span style="color:#aaa;font-size:14px;">Composez le message...</span></div>
+  <button class="bback"  onclick="back()">← Effacer</button>
+  <button class="bclear" onclick="clearAll()">Tout effacer</button>
+  <button class="bspeak" onclick="speak()">▶ Lire</button>
+</div>
+
+<div class="tb">
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 0 : non | est-ce que ? | ça va | il y a
+       DROITE   : oui (span lignes 0-1)
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:1;grid-column:1;">0</div>
+  <div class="c bl nc" style="grid-row:1;grid-column:2;"></div>
+  <div style="grid-row:1;grid-column:3;">
+    <div class="inner" style="grid-template-columns:90px 1fr 1fr 1fr;">
+      <div class="c wh fxxl nc">non</div>
+      <div class="c bl flg" onclick="add('est-ce que ')">est-ce que ?</div>
+      <div class="c bl flg" onclick="add('ça va ')">ça va</div>
+      <div class="c bl flg" onclick="add('il y a ')">il y a</div>
+    </div>
+  </div>
+  <div class="c wh fxl" style="grid-row:1/3;grid-column:4;" onclick="add('oui')">oui</div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 1 : s.v.p.(span 1-3) | p t k r f s ch n
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:2;grid-column:1;">1</div>
+  <div class="c bl fxs nc" style="grid-row:2/5;grid-column:2;font-size:11px;line-height:2;">s.<br>v.<br>p.</div>
+  <div style="grid-row:2;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(8,1fr);">
+      <div class="c yw fxl" onclick="add('p')">p</div>
+      <div class="c yw fxl" onclick="add('t')">t</div>
+      <div class="c yw flg" onclick="add('k')">k<sub style="font-size:8px">qu</sub></div>
+      <div class="c yw fxl" onclick="add('r')">r</div>
+      <div class="c yw flg" onclick="add('f')"><sup style="font-size:8px">ph</sup>f</div>
+      <div class="c yw flg" onclick="add('s')">s<sub style="font-size:8px">c·ç</sub></div>
+      <div class="c yw fxl" onclick="add('ch')">ch</div>
+      <div class="c yw fxl" onclick="add('n')">n</div>
+    </div>
+  </div>
+  <div class="c bl nc" style="grid-row:2;grid-column:4;"></div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 2 : (svp span) | b d g l v z j m
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:3;grid-column:1;">2</div>
+  <div style="grid-row:3;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(8,1fr);">
+      <div class="c yw fxl" onclick="add('b')">b</div>
+      <div class="c yw fxl" onclick="add('d')">d</div>
+      <div class="c yw flg" onclick="add('g')">g<sub style="font-size:8px">gu</sub></div>
+      <div class="c yw fxl" onclick="add('l')">l</div>
+      <div class="c yw fxl" onclick="add('v')">v</div>
+      <div class="c yw fxl" onclick="add('z')">z</div>
+      <div class="c yw flg" onclick="add('j')">j<sub style="font-size:8px">ge</sub></div>
+      <div class="c yw fxl" onclick="add('m')">m</div>
+    </div>
+  </div>
+  <div class="c bl nc" style="grid-row:3;grid-column:4;"></div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 3 : (svp span) | gn + vides
+       DROITE   : participons
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:4;grid-column:1;">3</div>
+  <div style="grid-row:4;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(8,1fr);">
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw nc"></div>
+      <div class="c yw fxl" onclick="add('gn')">gn</div>
+    </div>
+  </div>
+  <div class="c bl fxs nc" style="grid-row:4;grid-column:4;font-size:8px;">partici<br>pons</div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 4 : merci | vous il je tu elle nous
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:5;grid-column:1;">4</div>
+  <div class="c bl fxs nc" style="grid-row:5;grid-column:2;font-size:10px;">merci</div>
+  <div style="grid-row:5;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(6,1fr);">
+      <div class="c bl flg" onclick="add('vous ')">vous</div>
+      <div class="c bl flg" onclick="add('il ')">il</div>
+      <div class="c bl flg" onclick="add('je ')">je</div>
+      <div class="c bl flg" onclick="add('tu ')">tu</div>
+      <div class="c bl flg" onclick="add('elle ')">elle</div>
+      <div class="c bl flg" onclick="add('nous ')">nous</div>
+    </div>
+  </div>
+  <div class="c bl nc" style="grid-row:5;grid-column:4;"></div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 5 : (vide) | e u a o é i
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:6;grid-column:1;">5</div>
+  <div class="c bl nc" style="grid-row:6;grid-column:2;"></div>
+  <div style="grid-row:6;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(6,1fr);">
+      <div class="c yw fxl" onclick="add('e')">e</div>
+      <div class="c yw fxl" onclick="add('u')">u</div>
+      <div class="c yw fxl" onclick="add('a')">a</div>
+      <div class="c yw fxl" onclick="add('o')">o</div>
+      <div class="c yw fxl" onclick="add('é')">é</div>
+      <div class="c yw fxl" onclick="add('i')">i</div>
+    </div>
+  </div>
+  <div class="c bl nc" style="grid-row:6;grid-column:4;"></div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 6 : (vide) | oe ou an on è i
+       DROITE   : salut
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:7;grid-column:1;">6</div>
+  <div class="c bl nc" style="grid-row:7;grid-column:2;"></div>
+  <div style="grid-row:7;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(6,1fr);">
+      <div class="c yw flg" onclick="add('oe')">oe</div>
+      <div class="c yw flg" onclick="add('ou')">ou</div>
+      <div class="c yw flg" onclick="add('an')">an</div>
+      <div class="c yw flg" onclick="add('on')">on</div>
+      <div class="c yw flg" onclick="add('è')">è</div>
+      <div class="c yw flg" onclick="add('i')">i</div>
+    </div>
+  </div>
+  <div class="c bl fmd nc" style="grid-row:7;grid-column:4;font-size:10px;">salut</div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 7 : tu as compris? | ieu ui oi ill oin un ien
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:8;grid-column:1;">7</div>
+  <div class="c bl fxs nc" style="grid-row:8;grid-column:2;font-size:8px;padding:1px;">tu as<br>compris ?</div>
+  <div style="grid-row:8;grid-column:3;">
+    <div class="inner" style="grid-template-columns:repeat(7,1fr);">
+      <div class="c yw flg" onclick="add('ieu')">ieu</div>
+      <div class="c yw flg" onclick="add('ui')">ui</div>
+      <div class="c yw flg" onclick="add('oi')">oi</div>
+      <div class="c yw flg" onclick="add('ill')">ill</div>
+      <div class="c yw flg" onclick="add('oin')">oin</div>
+      <div class="c yw flg" onclick="add('un')">un</div>
+      <div class="c yw flg" onclick="add('ien')">ien</div>
+    </div>
+  </div>
+  <div class="c bl nc" style="grid-row:8;grid-column:4;"></div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 8 : (vide) | pourquoi quand (vide) ill oin un ien
+       DROITE   : au revoir (span lignes 8-9)
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:9;grid-column:1;">8</div>
+  <div class="c bl nc" style="grid-row:9;grid-column:2;"></div>
+  <div style="grid-row:9;grid-column:3;">
+    <div class="inner" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+      <div class="c bl flg" onclick="add('pourquoi ')">pourquoi</div>
+      <div class="c bl flg" onclick="add('quand ')">quand</div>
+      <div class="c bl nc"></div>
+      <div class="c bl flg" onclick="add('ill')">ill</div>
+      <div class="c bl flg" onclick="add('oin ')">oin</div>
+      <div class="c bl flg" onclick="add('un ')">un</div>
+      <div class="c bl flg" onclick="add('ien ')">ien</div>
+    </div>
+  </div>
+  <div class="c bl fxs nc" style="grid-row:9/11;grid-column:4;font-size:9px;text-align:center;padding:2px;">au<br>revoir</div>
+
+  <!-- ═══════════════════════════════════════════
+       LIGNE 9 : (vide) | (vide) (vide) où (vide) comment combien
+       ═══════════════════════════════════════════ -->
+  <div class="c num" style="grid-row:10;grid-column:1;">9</div>
+  <div class="c bl nc" style="grid-row:10;grid-column:2;"></div>
+  <div style="grid-row:10;grid-column:3;">
+    <div class="inner" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+      <div class="c bl nc"></div>
+      <div class="c bl nc"></div>
+      <div class="c bl flg" onclick="add('où ')">où</div>
+      <div class="c bl nc"></div>
+      <div class="c bl nc"></div>
+      <div class="c bl flg" onclick="add('comment ')">comment</div>
+      <div class="c bl flg" onclick="add('combien ')">combien</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="speed-row">
+  Vitesse :
+  <input type="range" min="0.5" max="1.5" step="0.1" value="0.85" id="spd" style="width:70px;">
+  <span id="spdv">0.9×</span>
+</div>
+
+<script>
+let txt = '';
+const el = document.getElementById('out');
+document.getElementById('spd').oninput = function(){
+  document.getElementById('spdv').textContent = parseFloat(this.value).toFixed(1)+'×';
+};
+function render(){
+  el.innerHTML = txt
+    ? '<span style="color:#111;">'+txt+'</span>'
+    : '<span style="color:#aaa;font-size:14px;">Composez le message...</span>';
+}
+function add(v){ txt += v; render(); }
+function back(){ txt = txt.replace(/\S+\s*$/, ''); render(); }
+function clearAll(){ txt = ''; render(); }
+function speak(){
+  if(!txt.trim()) return;
+  const u = new SpeechSynthesisUtterance(txt.trim());
+  u.lang = 'fr-FR';
+  u.rate = parseFloat(document.getElementById('spd').value);
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+</script>
+</body>
+</html>
