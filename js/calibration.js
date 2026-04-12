@@ -8,6 +8,57 @@ window.Calibration = (function() {
   const MAX_PAIRS = 20;
   const CORNERS = ['HAUT-GAUCHE', 'HAUT-DROIT', 'BAS-GAUCHE', 'BAS-DROIT'];
 
+  // ═══════════════════════════════════════════
+  // UTILITAIRES object-fit:cover
+  // ═══════════════════════════════════════════
+  // Avec object-fit:cover, la vidéo est zoomée/recadrée pour remplir le
+  // conteneur. Les coordonnées CSS (position dans l'élément) ne correspondent
+  // PAS aux coordonnées vidéo natives. Ces fonctions font la conversion.
+
+  /** Calcule le mapping object-fit:cover entre un élément vidéo et son contenu. */
+  function coverMapping(videoEl) {
+    const cw = videoEl.clientWidth;
+    const ch = videoEl.clientHeight;
+    const vw = videoEl.videoWidth || cw;
+    const vh = videoEl.videoHeight || ch;
+    if (cw === 0 || ch === 0 || vw === 0 || vh === 0) {
+      return { rw: cw, rh: ch, ox: 0, oy: 0, cw, ch };
+    }
+    const containerAR = cw / ch;
+    const videoAR = vw / vh;
+    let rw, rh, ox, oy;
+    if (videoAR > containerAR) {
+      // Vidéo plus large → hauteur cale, largeur déborde (crop horizontal)
+      rh = ch;
+      rw = ch * videoAR;
+    } else {
+      // Vidéo plus haute → largeur cale, hauteur déborde (crop vertical)
+      rw = cw;
+      rh = cw / videoAR;
+    }
+    ox = (cw - rw) / 2;
+    oy = (ch - rh) / 2;
+    return { rw, rh, ox, oy, cw, ch };
+  }
+
+  /** Position CSS (pixels dans l'élément) → coordonnées vidéo normalisées [0,1]. */
+  function cssToVideoNorm(cssPxX, cssPxY, videoEl) {
+    const m = coverMapping(videoEl);
+    return {
+      x: (cssPxX - m.ox) / m.rw,
+      y: (cssPxY - m.oy) / m.rh
+    };
+  }
+
+  /** Coordonnées vidéo normalisées [0,1] → position CSS (pixels dans l'élément). */
+  function videoNormToCss(normX, normY, videoEl) {
+    const m = coverMapping(videoEl);
+    return {
+      x: normX * m.rw + m.ox,
+      y: normY * m.rh + m.oy
+    };
+  }
+
   // État du wizard
   let stream = null;
   let points = [];
@@ -278,11 +329,16 @@ window.Calibration = (function() {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-    const nx = (clientX - rect.left) / rect.width;
-    const ny = (clientY - rect.top) / rect.height;
+    const cssPxX = clientX - rect.left;
+    const cssPxY = clientY - rect.top;
 
-    points.push({ x: nx, y: ny });
-    drawPoint(ctx, clientX - rect.left, clientY - rect.top, step + 1);
+    // Convertir la position CSS → coordonnées vidéo natives [0,1]
+    // pour tenir compte de object-fit:cover (zoom/crop)
+    const videoEl = document.getElementById('video-calib');
+    const norm = cssToVideoNorm(cssPxX, cssPxY, videoEl);
+
+    points.push({ x: norm.x, y: norm.y });
+    drawPoint(ctx, cssPxX, cssPxY, step + 1);
 
     document.getElementById('dot-' + step).className = 'step-dot done';
     step++;
@@ -682,7 +738,8 @@ window.Calibration = (function() {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const pxs = pts.map(p => ({ x: p.x * canvas.width, y: p.y * canvas.height }));
+    // Convertir coords vidéo natives [0,1] → pixels CSS dans le canvas
+    const pxs = pts.map(p => videoNormToCss(p.x, p.y, video));
 
     // Quadrilatère rempli
     ctx.beginPath();
@@ -794,6 +851,7 @@ window.Calibration = (function() {
   return {
     load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
+    cssToVideoNorm, videoNormToCss,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
     renderProfilesUI, promptAndSaveProfile,
     setReturnToOnce

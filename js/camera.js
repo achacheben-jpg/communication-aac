@@ -323,8 +323,10 @@ window.Camera = (function() {
       setDetectionState('detected');
 
       // Dessin curseur vert = position brute du pied détecté
+      // Convertir coords vidéo natives → pixels CSS pour le canvas
+      const footCss = Calibration.videoNormToCss(footPos.x, footPos.y, v);
       ctx.beginPath();
-      ctx.arc(footPos.x * c.width, footPos.y * c.height, 14, 0, Math.PI * 2);
+      ctx.arc(footCss.x, footCss.y, 14, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(29,158,117,0.55)';
       ctx.fill();
       ctx.strokeStyle = 'white';
@@ -367,20 +369,21 @@ window.Camera = (function() {
       // pense que le pied pointe (après application de l'offset vertical).
       const targetCam = boardUVToCam(corrected);
       if (targetCam) {
+        const targetCss = Calibration.videoNormToCss(targetCam.x, targetCam.y, v);
         // Ligne pointillée entre pied brut et point de sélection
         ctx.save();
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = 'rgba(231,76,60,0.5)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(footPos.x * c.width, footPos.y * c.height);
-        ctx.lineTo(targetCam.x * c.width, targetCam.y * c.height);
+        ctx.moveTo(footCss.x, footCss.y);
+        ctx.lineTo(targetCss.x, targetCss.y);
         ctx.stroke();
         ctx.restore();
 
         // Point rouge pulsant + croix centrale
-        const tx = targetCam.x * c.width;
-        const ty = targetCam.y * c.height;
+        const tx = targetCss.x;
+        const ty = targetCss.y;
         ctx.beginPath();
         ctx.arc(tx, ty, 18, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(231,76,60,0.3)';
@@ -547,7 +550,8 @@ window.Camera = (function() {
   }
 
   function drawCalibOverlay(ctx, canvas) {
-    const pts = Calibration.getPoints().map(p => ({ x: p.x * canvas.width, y: p.y * canvas.height }));
+    const videoEl = document.getElementById('video-live');
+    const pts = Calibration.getPoints().map(p => Calibration.videoNormToCss(p.x, p.y, videoEl));
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     ctx.lineTo(pts[1].x, pts[1].y);
