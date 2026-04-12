@@ -551,7 +551,18 @@ window.Camera = (function() {
 
   function drawCalibOverlay(ctx, canvas) {
     const videoEl = document.getElementById('video-live');
-    const pts = Calibration.getPoints().map(p => Calibration.videoNormToCss(p.x, p.y, videoEl));
+    const rawPts = Calibration.getPoints();
+    const pts = rawPts.map(p => Calibration.videoNormToCss(p.x, p.y, videoEl));
+    if (!drawCalibOverlay._logged) {
+      drawCalibOverlay._logged = true;
+      console.log('[camera] drawCalibOverlay', {
+        rawPts,
+        cssPts: pts.map(p => [p.x.toFixed(1), p.y.toFixed(1)]),
+        canvas: [canvas.width, canvas.height],
+        video: [videoEl.clientWidth, videoEl.clientHeight],
+        videoNative: [videoEl.videoWidth, videoEl.videoHeight]
+      });
+    }
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     ctx.lineTo(pts[1].x, pts[1].y);

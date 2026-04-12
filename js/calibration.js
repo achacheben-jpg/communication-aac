@@ -73,8 +73,23 @@ window.Calibration = (function() {
 
   function setReturnToOnce(dest) { returnToOnce = dest; }
 
+  // Marqueur de format : les anciennes calibrations (sans _fmt) étaient en
+  // coordonnées CSS-normalisées. Les nouvelles (_fmt=2) sont en coordonnées
+  // vidéo natives. On invalide automatiquement les anciennes.
+  const CALIB_FORMAT = 2;
+  const FORMAT_KEY = 'calibPoints_fmt';
+
   function load() {
     try {
+      const fmt = parseInt(localStorage.getItem(FORMAT_KEY) || '0', 10);
+      if (fmt < CALIB_FORMAT) {
+        // Ancien format détecté → invalider
+        console.warn('[calib] ancien format de calibration détecté (v' + fmt + '), réinitialisation');
+        localStorage.removeItem(POINTS_KEY);
+        localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
+        points = [];
+        return points;
+      }
       const raw = localStorage.getItem(POINTS_KEY);
       if (raw) points = JSON.parse(raw) || [];
     } catch (e) { points = []; }
@@ -337,6 +352,14 @@ window.Calibration = (function() {
     const videoEl = document.getElementById('video-calib');
     const norm = cssToVideoNorm(cssPxX, cssPxY, videoEl);
 
+    console.log('[calib] tap #' + (step + 1), {
+      cssPx: [cssPxX.toFixed(1), cssPxY.toFixed(1)],
+      container: [videoEl.clientWidth, videoEl.clientHeight],
+      videoNative: [videoEl.videoWidth, videoEl.videoHeight],
+      norm: [norm.x.toFixed(3), norm.y.toFixed(3)],
+      mapping: coverMapping(videoEl)
+    });
+
     points.push({ x: norm.x, y: norm.y });
     drawPoint(ctx, cssPxX, cssPxY, step + 1);
 
@@ -386,6 +409,8 @@ window.Calibration = (function() {
 
   function save() {
     localStorage.setItem(POINTS_KEY, JSON.stringify(points));
+    localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
+    console.log('[calib] save() points =', JSON.stringify(points));
   }
 
   function isCalibrated() {
