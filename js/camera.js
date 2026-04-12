@@ -66,7 +66,7 @@ window.Camera = (function() {
         }
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 } },
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false
         });
         v.srcObject = stream;

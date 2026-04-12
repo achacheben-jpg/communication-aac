@@ -9,14 +9,16 @@ window.Calibration = (function() {
   const CORNERS = ['HAUT-GAUCHE', 'HAUT-DROIT', 'BAS-GAUCHE', 'BAS-DROIT'];
 
   // ═══════════════════════════════════════════
-  // UTILITAIRES object-fit:cover
+  // UTILITAIRES object-fit:contain
   // ═══════════════════════════════════════════
-  // Avec object-fit:cover, la vidéo est zoomée/recadrée pour remplir le
-  // conteneur. Les coordonnées CSS (position dans l'élément) ne correspondent
-  // PAS aux coordonnées vidéo natives. Ces fonctions font la conversion.
+  // Avec object-fit:contain, la vidéo est inscrite dans le conteneur
+  // (barres noires possibles). Les coordonnées CSS ne correspondent pas
+  // directement aux coordonnées vidéo natives. Ces fonctions font la conversion.
 
-  /** Calcule le mapping object-fit:cover entre un élément vidéo et son contenu. */
-  function coverMapping(videoEl) {
+  /** Calcule le mapping object-fit:contain entre un élément vidéo et son contenu.
+   *  Avec contain, la vidéo est inscrite dans le conteneur (barres noires possibles).
+   *  Retourne la taille rendue (rw,rh) et l'offset (ox,oy) des barres. */
+  function containMapping(videoEl) {
     const cw = videoEl.clientWidth;
     const ch = videoEl.clientHeight;
     const vw = videoEl.videoWidth || cw;
@@ -26,24 +28,24 @@ window.Calibration = (function() {
     }
     const containerAR = cw / ch;
     const videoAR = vw / vh;
-    let rw, rh, ox, oy;
+    let rw, rh;
     if (videoAR > containerAR) {
-      // Vidéo plus large → hauteur cale, largeur déborde (crop horizontal)
-      rh = ch;
-      rw = ch * videoAR;
-    } else {
-      // Vidéo plus haute → largeur cale, hauteur déborde (crop vertical)
+      // Vidéo plus large → largeur cale, barres en haut/bas
       rw = cw;
       rh = cw / videoAR;
+    } else {
+      // Vidéo plus haute → hauteur cale, barres à gauche/droite
+      rh = ch;
+      rw = ch * videoAR;
     }
-    ox = (cw - rw) / 2;
-    oy = (ch - rh) / 2;
+    const ox = (cw - rw) / 2;
+    const oy = (ch - rh) / 2;
     return { rw, rh, ox, oy, cw, ch };
   }
 
   /** Position CSS (pixels dans l'élément) → coordonnées vidéo normalisées [0,1]. */
   function cssToVideoNorm(cssPxX, cssPxY, videoEl) {
-    const m = coverMapping(videoEl);
+    const m = containMapping(videoEl);
     return {
       x: (cssPxX - m.ox) / m.rw,
       y: (cssPxY - m.oy) / m.rh
@@ -52,7 +54,7 @@ window.Calibration = (function() {
 
   /** Coordonnées vidéo normalisées [0,1] → position CSS (pixels dans l'élément). */
   function videoNormToCss(normX, normY, videoEl) {
-    const m = coverMapping(videoEl);
+    const m = containMapping(videoEl);
     return {
       x: normX * m.rw + m.ox,
       y: normY * m.rh + m.oy
@@ -76,7 +78,7 @@ window.Calibration = (function() {
   // Marqueur de format : les anciennes calibrations (sans _fmt) étaient en
   // coordonnées CSS-normalisées. Les nouvelles (_fmt=2) sont en coordonnées
   // vidéo natives. On invalide automatiquement les anciennes.
-  const CALIB_FORMAT = 2;
+  const CALIB_FORMAT = 3;
   const FORMAT_KEY = 'calibPoints_fmt';
 
   function load() {
@@ -357,7 +359,7 @@ window.Calibration = (function() {
       container: [videoEl.clientWidth, videoEl.clientHeight],
       videoNative: [videoEl.videoWidth, videoEl.videoHeight],
       norm: [norm.x.toFixed(3), norm.y.toFixed(3)],
-      mapping: coverMapping(videoEl)
+      mapping: containMapping(videoEl)
     });
 
     points.push({ x: norm.x, y: norm.y });
