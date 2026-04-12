@@ -1,7 +1,7 @@
 // Service Worker — cache offline-first
 // IMPORTANT : bumper CACHE_VERSION à chaque déploiement pour invalider
 // l'ancien cache sur les clients installés.
-const CACHE_VERSION = 'aac-v14-contain-mode';
+const CACHE_VERSION = 'aac-v15-foot-tip';
 const CORE_ASSETS = [
   './',
   './index.html',
