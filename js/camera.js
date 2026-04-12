@@ -18,8 +18,10 @@ window.Camera = (function() {
   let animFrame = null;
   let dwellCell = null;
   let dwellStart = null;
-  let lastFootPos = null;          // {x,y} en coordonnées vidéo normalisées
-  let lastFootUVBoard = null;      // {u,v} en coordonnées tableau (pour offset learning)
+  let dwellGraceEnd = 0;            // timestamp de fin de grâce (tolérance spasticité)
+  let lastFootPos = null;           // {x,y} en coordonnées vidéo normalisées
+  let lastFootUVBoard = null;       // {u,v} en coordonnées tableau (pour offset learning)
+  let smoothedFootPos = null;       // EMA de la position pied (lissage spasticité)
   let poseInstance = null;
   let poseLoading = false;
   let usePoseModel = false;
@@ -136,6 +138,7 @@ window.Camera = (function() {
     clearDwell();
     lastFootPos = null;
     lastFootUVBoard = null;
+    smoothedFootPos = null;
     bgFrame = null;
     setDetectionState('idle');
   }
@@ -313,8 +316,9 @@ window.Camera = (function() {
         lastFootPos = detectFootFromPixels(v);
       }
 
-      const footPos = lastFootPos;
-      if (!footPos) {
+      const rawFootPos = lastFootPos;
+      if (!rawFootPos) {
+        smoothedFootPos = null;
         clearDwell();
         lastFootUVBoard = null;
         setDetectionState('searching');
@@ -322,9 +326,29 @@ window.Camera = (function() {
       }
       setDetectionState('detected');
 
-      // Dessin curseur vert = position brute du pied détecté
-      // Convertir coords vidéo natives → pixels CSS pour le canvas
-      const footCss = Calibration.videoNormToCss(footPos.x, footPos.y, v);
+      // ═══ LISSAGE TEMPOREL (EMA) ═══
+      // Le pied spastique bouge sans arrêt → on lisse pour stabiliser.
+      // Slider "lissage" dans ⚙ : 0 = pas de lissage, 0.9 = très lisse.
+      const smoothSlider = document.getElementById('sl-smooth');
+      const smoothing = smoothSlider ? parseFloat(smoothSlider.value) : 0.6;
+      const alpha = 1 - smoothing; // alpha faible = plus de lissage
+      if (!smoothedFootPos) {
+        smoothedFootPos = { x: rawFootPos.x, y: rawFootPos.y };
+      } else {
+        smoothedFootPos.x += alpha * (rawFootPos.x - smoothedFootPos.x);
+        smoothedFootPos.y += alpha * (rawFootPos.y - smoothedFootPos.y);
+      }
+      const footPos = smoothedFootPos;
+
+      // Dessin : point vert PETIT pour la position brute (jitter visible)
+      const rawCss = Calibration.videoNormToCss ? Calibration.videoNormToCss(rawFootPos.x, rawFootPos.y, v) : { x: rawFootPos.x * c.width, y: rawFootPos.y * c.height };
+      ctx.beginPath();
+      ctx.arc(rawCss.x, rawCss.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fill();
+
+      // Dessin : point vert GROS pour la position lissée (stable)
+      const footCss = Calibration.videoNormToCss ? Calibration.videoNormToCss(footPos.x, footPos.y, v) : { x: footPos.x * c.width, y: footPos.y * c.height };
       ctx.beginPath();
       ctx.arc(footCss.x, footCss.y, 14, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(29,158,117,0.55)';
@@ -671,25 +695,55 @@ window.Camera = (function() {
     return Tableau.cellFromElement(el);
   }
 
-  /** Dwell selection */
+  /** Dwell selection avec tolérance pour la spasticité.
+   *  - Le pied peut brièvement glisser vers une case voisine ou quitter
+   *    la détection sans réinitialiser le compteur (grâce de 400 ms).
+   *  - Seul un déplacement vers une case DISTANTE ou une absence prolongée
+   *    réinitialise le dwell. */
   function handleDwell(cell) {
-    if (!cell) { clearDwell(); return; }
-    if (cell !== dwellCell) {
+    const now = Date.now();
+    const GRACE_MS = 400; // tolérance spasticité
+
+    if (!cell) {
+      // Pied perdu : vérifier si on est dans la période de grâce
+      if (dwellCell && now < dwellGraceEnd) {
+        // En grâce → on continue d'afficher la barre mais on ne progresse pas
+        return;
+      }
       clearDwell();
-      dwellCell = cell;
-      dwellStart = Date.now();
-      cell.classList.add('c-loading');
       return;
     }
-    const target = parseFloat(document.getElementById('sl-dwell').value) * 1000;
-    const elapsed = Date.now() - dwellStart;
-    const ratio = Math.min(elapsed / target, 1);
-    document.getElementById('dwell-bar').style.width = (ratio * 100) + '%';
-    if (elapsed >= target) {
-      cell.classList.remove('c-loading');
-      if (window.App) App.sel(cell, { fromCamera: true });
-      clearDwell();
+
+    if (cell === dwellCell) {
+      // Même case → accumuler le dwell et rafraîchir la grâce
+      dwellGraceEnd = now + GRACE_MS;
+      const target = parseFloat(document.getElementById('sl-dwell').value) * 1000;
+      const elapsed = now - dwellStart;
+      const ratio = Math.min(elapsed / target, 1);
+      document.getElementById('dwell-bar').style.width = (ratio * 100) + '%';
+      if (elapsed >= target) {
+        cell.classList.remove('c-loading');
+        if (window.App) App.sel(cell, { fromCamera: true });
+        clearDwell();
+        // Cooldown post-sélection : empêcher re-sélection immédiate
+        dwellGraceEnd = 0;
+      }
+      return;
     }
+
+    // Case DIFFÉRENTE de la case en dwell
+    if (dwellCell && now < dwellGraceEnd) {
+      // On est dans la période de grâce → ignorer ce glissement
+      // (le pied a bougé par spasticité, pas par volonté)
+      return;
+    }
+
+    // Hors grâce ou pas de dwell en cours → commencer un nouveau dwell
+    clearDwell();
+    dwellCell = cell;
+    dwellStart = now;
+    dwellGraceEnd = now + GRACE_MS;
+    cell.classList.add('c-loading');
   }
 
   function clearDwell() {
@@ -698,6 +752,7 @@ window.Camera = (function() {
       dwellCell = null;
     }
     dwellStart = null;
+    dwellGraceEnd = 0;
     const b = document.getElementById('dwell-bar');
     if (b) b.style.width = '0%';
   }
