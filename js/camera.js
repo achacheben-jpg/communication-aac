@@ -323,8 +323,14 @@ window.Camera = (function() {
       setDetectionState('detected');
 
       // Dessin curseur vert = position brute du pied détecté
+      // footPos est en vidéo-normalisé → convertir en display pour le dessin
+      const footDisplay = (window.VideoCoords && v.videoWidth)
+        ? VideoCoords.videoToDisplay(footPos.x, footPos.y, v)
+        : footPos;
+      const footDX = footDisplay.x * c.width;
+      const footDY = footDisplay.y * c.height;
       ctx.beginPath();
-      ctx.arc(footPos.x * c.width, footPos.y * c.height, 14, 0, Math.PI * 2);
+      ctx.arc(footDX, footDY, 14, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(29,158,117,0.55)';
       ctx.fill();
       ctx.strokeStyle = 'white';
@@ -362,25 +368,27 @@ window.Camera = (function() {
       }
 
       // ═══ POINT ROUGE : endroit réellement sélectionné ═══
-      // On mappe le UV corrigé (dans le tableau) vers la caméra via
-      // bilinéaire forward, pour visualiser exactement où le système
-      // pense que le pied pointe (après application de l'offset vertical).
-      const targetCam = boardUVToCam(corrected);
-      if (targetCam) {
+      // boardUVToCam retourne en vidéo-normalisé → convertir en display pour le dessin
+      const targetCamV = boardUVToCam(corrected);
+      if (targetCamV) {
+        const targetDisplay = (window.VideoCoords && v.videoWidth)
+          ? VideoCoords.videoToDisplay(targetCamV.x, targetCamV.y, v)
+          : targetCamV;
+
         // Ligne pointillée entre pied brut et point de sélection
         ctx.save();
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = 'rgba(231,76,60,0.5)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(footPos.x * c.width, footPos.y * c.height);
-        ctx.lineTo(targetCam.x * c.width, targetCam.y * c.height);
+        ctx.moveTo(footDX, footDY);
+        ctx.lineTo(targetDisplay.x * c.width, targetDisplay.y * c.height);
         ctx.stroke();
         ctx.restore();
 
         // Point rouge pulsant + croix centrale
-        const tx = targetCam.x * c.width;
-        const ty = targetCam.y * c.height;
+        const tx = targetDisplay.x * c.width;
+        const ty = targetDisplay.y * c.height;
         ctx.beginPath();
         ctx.arc(tx, ty, 18, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(231,76,60,0.3)';
@@ -547,7 +555,13 @@ window.Camera = (function() {
   }
 
   function drawCalibOverlay(ctx, canvas) {
-    const pts = Calibration.getPoints().map(p => ({ x: p.x * canvas.width, y: p.y * canvas.height }));
+    const v = document.getElementById('video-live');
+    const pts = Calibration.getPoints().map(p => {
+      const dn = (window.VideoCoords && v && v.videoWidth)
+        ? VideoCoords.videoToDisplay(p.x, p.y, v)
+        : p;
+      return { x: dn.x * canvas.width, y: dn.y * canvas.height };
+    });
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     ctx.lineTo(pts[1].x, pts[1].y);

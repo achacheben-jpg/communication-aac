@@ -278,10 +278,17 @@ window.Calibration = (function() {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-    const nx = (clientX - rect.left) / rect.width;
-    const ny = (clientY - rect.top) / rect.height;
+    const displayNX = (clientX - rect.left) / rect.width;
+    const displayNY = (clientY - rect.top) / rect.height;
 
-    points.push({ x: nx, y: ny });
+    // Convertir display-normalized → video-normalized pour cohérence
+    // avec tous les éléments vidéo (le cadrage change entre #video-calib et #video-live)
+    const v = document.getElementById('video-calib');
+    const vn = (window.VideoCoords && v && v.videoWidth)
+      ? VideoCoords.displayToVideo(displayNX, displayNY, v)
+      : { x: displayNX, y: displayNY };
+
+    points.push(vn);
     drawPoint(ctx, clientX - rect.left, clientY - rect.top, step + 1);
 
     document.getElementById('dot-' + step).className = 'step-dot done';
@@ -548,7 +555,13 @@ window.Calibration = (function() {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const pxs = pts.map(p => ({ x: p.x * canvas.width, y: p.y * canvas.height }));
+    // pts sont en vidéo-normalisé → convertir en display-normalisé pour dessiner
+    const pxs = pts.map(p => {
+      const dn = (window.VideoCoords && video.videoWidth)
+        ? VideoCoords.videoToDisplay(p.x, p.y, video)
+        : p;
+      return { x: dn.x * canvas.width, y: dn.y * canvas.height };
+    });
 
     // Quadrilatère rempli
     ctx.beginPath();
