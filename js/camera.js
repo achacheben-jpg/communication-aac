@@ -487,23 +487,27 @@ window.Camera = (function() {
       if (maskCount < 15) return null;
 
       // Trouver la plus grande composante connexe (BFS)
+      // On sauvegarde les pixels de la plus grande pour calculer la pointe.
       const visited = new Uint8Array(w * h);
       const stack = new Int32Array(w * h);
-      let bestCx = 0, bestCy = 0, bestSize = 0;
+      let bestPixels = null;
+      let bestSize = 0;
+      let bestCx = 0, bestCy = 0;
 
       for (let start = 0; start < w * h; start++) {
         if (!mask[start] || visited[start]) continue;
         let top = 0;
         stack[top++] = start;
         visited[start] = 1;
-        let sumX = 0, sumY = 0, size = 0;
+        const pixels = [];
+        let sumX = 0, sumY = 0;
         while (top > 0) {
           const p = stack[--top];
+          pixels.push(p);
           const x = p % w;
           const y = (p - x) / w;
           sumX += x;
           sumY += y;
-          size++;
           if (x > 0) {
             const q = p - 1;
             if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
@@ -521,19 +525,75 @@ window.Camera = (function() {
             if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
           }
         }
-        if (size > bestSize) {
-          bestSize = size;
-          bestCx = sumX / size;
-          bestCy = sumY / size;
+        if (pixels.length > bestSize) {
+          bestSize = pixels.length;
+          bestPixels = pixels;
+          bestCx = sumX / pixels.length;
+          bestCy = sumY / pixels.length;
         }
       }
 
-      if (bestSize < 15) return null;
+      if (!bestPixels || bestSize < 15) return null;
+
+      // ═══ DÉTECTION DE LA POINTE DU PIED ═══
+      // Le pied entre dans le quadrilatère calibré depuis un bord (le pied
+      // vient de la jambe). La pointe (gros orteil) est le point du blob
+      // le PLUS ÉLOIGNÉ de tous les bords du quad. Ça fonctionne quelle que
+      // soit l'orientation du pied.
+      if (pts) {
+        const quad = [pts[0], pts[1], pts[3], pts[2]]; // TL, TR, BR, BL
+        let maxDist = 0;
+        const dists = new Float32Array(bestPixels.length);
+        for (let i = 0; i < bestPixels.length; i++) {
+          const p = bestPixels[i];
+          const nx = (p % w) / w;
+          const ny = ((p - (p % w)) / w) / h;
+          dists[i] = minDistToQuadEdges(nx, ny, quad);
+          if (dists[i] > maxDist) maxDist = dists[i];
+        }
+        if (maxDist > 0.001) {
+          // Centroïde lissé des pixels dans le top 35% de profondeur
+          const threshold = maxDist * 0.65;
+          let tipSumX = 0, tipSumY = 0, tipCount = 0;
+          for (let i = 0; i < bestPixels.length; i++) {
+            if (dists[i] >= threshold) {
+              const p = bestPixels[i];
+              tipSumX += p % w;
+              tipSumY += (p - (p % w)) / w;
+              tipCount++;
+            }
+          }
+          if (tipCount > 2) {
+            return { x: tipSumX / tipCount / w, y: tipSumY / tipCount / h };
+          }
+        }
+      }
+      // Fallback : centroïde (si pas de calibration ou blob trop petit)
       return { x: bestCx / w, y: bestCy / h };
     } catch (e) {
       console.warn('[camera] pixel detect error', e);
       return null;
     }
+  }
+
+  /** Distance minimale d'un point aux 4 segments d'un quadrilatère.
+   *  Plus la valeur est grande, plus le point est "profond à l'intérieur". */
+  function minDistToQuadEdges(px, py, quad) {
+    let minD = Infinity;
+    for (let i = 0; i < quad.length; i++) {
+      const a = quad[i], b = quad[(i + 1) % quad.length];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const lenSq = dx * dx + dy * dy;
+      let d;
+      if (lenSq < 1e-10) {
+        d = Math.hypot(px - a.x, py - a.y);
+      } else {
+        const t = Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / lenSq));
+        d = Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+      }
+      if (d < minD) minD = d;
+    }
+    return minD;
   }
 
   /** Point-in-quad test (crossing number) */
