@@ -8,6 +8,59 @@ window.Calibration = (function() {
   const MAX_PAIRS = 20;
   const CORNERS = ['HAUT-GAUCHE', 'HAUT-DROIT', 'BAS-GAUCHE', 'BAS-DROIT'];
 
+  // ═══════════════════════════════════════════
+  // UTILITAIRES object-fit:contain
+  // ═══════════════════════════════════════════
+  // Avec object-fit:contain, la vidéo est inscrite dans le conteneur
+  // (barres noires possibles). Les coordonnées CSS ne correspondent pas
+  // directement aux coordonnées vidéo natives. Ces fonctions font la conversion.
+
+  /** Calcule le mapping object-fit:contain entre un élément vidéo et son contenu.
+   *  Avec contain, la vidéo est inscrite dans le conteneur (barres noires possibles).
+   *  Retourne la taille rendue (rw,rh) et l'offset (ox,oy) des barres. */
+  function containMapping(videoEl) {
+    const cw = videoEl.clientWidth;
+    const ch = videoEl.clientHeight;
+    const vw = videoEl.videoWidth || cw;
+    const vh = videoEl.videoHeight || ch;
+    if (cw === 0 || ch === 0 || vw === 0 || vh === 0) {
+      return { rw: cw, rh: ch, ox: 0, oy: 0, cw, ch };
+    }
+    const containerAR = cw / ch;
+    const videoAR = vw / vh;
+    let rw, rh;
+    if (videoAR > containerAR) {
+      // Vidéo plus large → largeur cale, barres en haut/bas
+      rw = cw;
+      rh = cw / videoAR;
+    } else {
+      // Vidéo plus haute → hauteur cale, barres à gauche/droite
+      rh = ch;
+      rw = ch * videoAR;
+    }
+    const ox = (cw - rw) / 2;
+    const oy = (ch - rh) / 2;
+    return { rw, rh, ox, oy, cw, ch };
+  }
+
+  /** Position CSS (pixels dans l'élément) → coordonnées vidéo normalisées [0,1]. */
+  function cssToVideoNorm(cssPxX, cssPxY, videoEl) {
+    const m = containMapping(videoEl);
+    return {
+      x: (cssPxX - m.ox) / m.rw,
+      y: (cssPxY - m.oy) / m.rh
+    };
+  }
+
+  /** Coordonnées vidéo normalisées [0,1] → position CSS (pixels dans l'élément). */
+  function videoNormToCss(normX, normY, videoEl) {
+    const m = containMapping(videoEl);
+    return {
+      x: normX * m.rw + m.ox,
+      y: normY * m.rh + m.oy
+    };
+  }
+
   // État du wizard
   let stream = null;
   let points = [];
@@ -22,8 +75,23 @@ window.Calibration = (function() {
 
   function setReturnToOnce(dest) { returnToOnce = dest; }
 
+  // Marqueur de format : les anciennes calibrations (sans _fmt) étaient en
+  // coordonnées CSS-normalisées. Les nouvelles (_fmt=2) sont en coordonnées
+  // vidéo natives. On invalide automatiquement les anciennes.
+  const CALIB_FORMAT = 3;
+  const FORMAT_KEY = 'calibPoints_fmt';
+
   function load() {
     try {
+      const fmt = parseInt(localStorage.getItem(FORMAT_KEY) || '0', 10);
+      if (fmt < CALIB_FORMAT) {
+        // Ancien format détecté → invalider
+        console.warn('[calib] ancien format de calibration détecté (v' + fmt + '), réinitialisation');
+        localStorage.removeItem(POINTS_KEY);
+        localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
+        points = [];
+        return points;
+      }
       const raw = localStorage.getItem(POINTS_KEY);
       if (raw) points = JSON.parse(raw) || [];
     } catch (e) { points = []; }
@@ -278,18 +346,24 @@ window.Calibration = (function() {
     const rect = canvas.getBoundingClientRect();
     const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-    const displayNX = (clientX - rect.left) / rect.width;
-    const displayNY = (clientY - rect.top) / rect.height;
+    const cssPxX = clientX - rect.left;
+    const cssPxY = clientY - rect.top;
 
-    // Convertir display-normalized → video-normalized pour cohérence
-    // avec tous les éléments vidéo (le cadrage change entre #video-calib et #video-live)
-    const v = document.getElementById('video-calib');
-    const vn = (window.VideoCoords && v && v.videoWidth)
-      ? VideoCoords.displayToVideo(displayNX, displayNY, v)
-      : { x: displayNX, y: displayNY };
+    // Convertir la position CSS → coordonnées vidéo natives [0,1]
+    // pour tenir compte de object-fit:cover (zoom/crop)
+    const videoEl = document.getElementById('video-calib');
+    const norm = cssToVideoNorm(cssPxX, cssPxY, videoEl);
 
-    points.push(vn);
-    drawPoint(ctx, clientX - rect.left, clientY - rect.top, step + 1);
+    console.log('[calib] tap #' + (step + 1), {
+      cssPx: [cssPxX.toFixed(1), cssPxY.toFixed(1)],
+      container: [videoEl.clientWidth, videoEl.clientHeight],
+      videoNative: [videoEl.videoWidth, videoEl.videoHeight],
+      norm: [norm.x.toFixed(3), norm.y.toFixed(3)],
+      mapping: containMapping(videoEl)
+    });
+
+    points.push({ x: norm.x, y: norm.y });
+    drawPoint(ctx, cssPxX, cssPxY, step + 1);
 
     document.getElementById('dot-' + step).className = 'step-dot done';
     step++;
@@ -337,6 +411,8 @@ window.Calibration = (function() {
 
   function save() {
     localStorage.setItem(POINTS_KEY, JSON.stringify(points));
+    localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
+    console.log('[calib] save() points =', JSON.stringify(points));
   }
 
   function isCalibrated() {
@@ -344,18 +420,27 @@ window.Calibration = (function() {
   }
 
   // ═══════════════════════════════════════════
-  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7)
+  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7 — améliorée)
   // ═══════════════════════════════════════════
-  // Algorithme : on cherche la plus grande composante connexe de pixels
-  // saturés (le tableau est coloré — bleu/jaune/rouge — sur un fond
-  // typiquement peu saturé). On extrait ensuite les 4 coins par les
-  // extrêmes de (x+y) et (x-y), ce qui fonctionne aussi quand le tableau
-  // est légèrement incliné.
+  // Algorithme amélioré :
+  //   1. Masque saturation + fermeture morphologique (comble les trous blancs)
+  //   2. Plus grande composante connexe (BFS, 4-connectivité)
+  //   3. Coins par percentile (robuste aux outliers) au lieu d'extrême unique
+  //   4. Validation : taille, ratio, convexité, taux de remplissage
+  //   5. Lissage temporel (EMA) pour stabiliser les coins entre frames
+
+  // Historique pour lissage temporel des coins détectés
+  let _smoothedCorners = null;  // [TL,TR,BL,BR] lissé
+  const EMA_ALPHA = 0.35;       // poids de la nouvelle frame (0=stable, 1=réactif)
+  const MAX_JUMP = 0.12;        // saut max toléré entre frames (en coords normalisées)
+
+  function resetSmoothing() { _smoothedCorners = null; }
 
   /** Lance la boucle de détection continue (~400 ms) */
   function startLive() {
     stopLive();
     liveActive = true;
+    resetSmoothing();
     tickLive();
   }
 
@@ -404,6 +489,7 @@ window.Calibration = (function() {
   /** Bouton "⚡ Auto" : force une nouvelle analyse immédiate (one-shot) */
   function auto() {
     liveLockedByUser = false;
+    resetSmoothing();
     if (!liveActive) startLive();
     // Et on déclenche une frame tout de suite
     try { runLiveFrame(); } catch (e) { console.warn('[calib] auto manual trigger error', e); }
@@ -412,14 +498,102 @@ window.Calibration = (function() {
   // Compteur pour debug (affiche dans la console toutes les N frames)
   let _detectCounter = 0;
 
+  /** Fermeture morphologique sur un masque binaire (Uint8Array) de taille W×H.
+   *  Dilate puis érode avec un noyau carré de rayon `r` pixels.
+   *  Comble les trous (cellules blanches entre cellules colorées). */
+  function morphClose(mask, W, H, r) {
+    const N = W * H;
+    const tmp = new Uint8Array(N);
+    // Dilatation : si au moins un voisin dans le carré (2r+1)×(2r+1) est à 1 → 1
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let found = 0;
+        for (let dy = -r; dy <= r && !found; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= H) continue;
+          for (let dx = -r; dx <= r && !found; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= W) continue;
+            if (mask[ny * W + nx]) found = 1;
+          }
+        }
+        tmp[y * W + x] = found;
+      }
+    }
+    // Érosion : si tous les voisins dans le carré (2r+1)×(2r+1) sont à 1 → 1
+    const out = new Uint8Array(N);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let allOk = 1;
+        for (let dy = -r; dy <= r && allOk; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= H) { allOk = 0; break; }
+          for (let dx = -r; dx <= r && allOk; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= W) { allOk = 0; break; }
+            if (!tmp[ny * W + nx]) allOk = 0;
+          }
+        }
+        out[y * W + x] = allOk;
+      }
+    }
+    return out;
+  }
+
+  /** Vérifie que 4 coins forment un quadrilatère convexe.
+   *  Ordre attendu : [TL, TR, BL, BR] → parcours TL→TR→BR→BL. */
+  function isConvexQuad(pts) {
+    // Parcours dans l'ordre : TL(0) → TR(1) → BR(3) → BL(2)
+    const order = [pts[0], pts[1], pts[3], pts[2]];
+    let sign = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = order[i];
+      const b = order[(i + 1) % 4];
+      const c = order[(i + 2) % 4];
+      const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+      if (cross === 0) continue;
+      const s = cross > 0 ? 1 : -1;
+      if (sign === 0) sign = s;
+      else if (s !== sign) return false;
+    }
+    return true;
+  }
+
+  /** Lissage temporel EMA des coins. Retourne les coins lissés ou null si
+   *  le saut est trop grand (la caméra a bougé → on réinitialise). */
+  function smoothCorners(raw) {
+    if (!_smoothedCorners) {
+      _smoothedCorners = raw.map(p => ({ x: p.x, y: p.y }));
+      return _smoothedCorners.map(p => ({ x: p.x, y: p.y }));
+    }
+    // Vérifier si le saut est trop grand (caméra déplacée)
+    let maxDist = 0;
+    for (let i = 0; i < 4; i++) {
+      const dx = raw[i].x - _smoothedCorners[i].x;
+      const dy = raw[i].y - _smoothedCorners[i].y;
+      maxDist = Math.max(maxDist, Math.sqrt(dx * dx + dy * dy));
+    }
+    if (maxDist > MAX_JUMP) {
+      // Grand saut : accepter la nouvelle position directement
+      _smoothedCorners = raw.map(p => ({ x: p.x, y: p.y }));
+      return _smoothedCorners.map(p => ({ x: p.x, y: p.y }));
+    }
+    // EMA : new = alpha * raw + (1-alpha) * old
+    for (let i = 0; i < 4; i++) {
+      _smoothedCorners[i].x = EMA_ALPHA * raw[i].x + (1 - EMA_ALPHA) * _smoothedCorners[i].x;
+      _smoothedCorners[i].y = EMA_ALPHA * raw[i].y + (1 - EMA_ALPHA) * _smoothedCorners[i].y;
+    }
+    return _smoothedCorners.map(p => ({ x: p.x, y: p.y }));
+  }
+
   /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
    *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
    *  ou null si la détection échoue. */
   function detectBoardCorners(video) {
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 360;
-    const W = 200;
-    const H = Math.max(80, Math.round(W * vh / vw));
+    const W = 320;
+    const H = Math.max(120, Math.round(W * vh / vw));
 
     const cvs = document.createElement('canvas');
     cvs.width = W;
@@ -433,29 +607,34 @@ window.Calibration = (function() {
     catch (e) { console.warn('[calib] getImageData failed', e); return null; }
 
     // 1) Masque de saturation : pixels colorés = probablement tableau.
-    //    Seuil à 0.22 (plus permissif) pour attraper des couleurs atténuées.
-    const mask = new Uint8Array(W * H);
-    let maskCount = 0;
+    const rawMask = new Uint8Array(W * H);
+    let rawMaskCount = 0;
     for (let i = 0; i < W * H; i++) {
       const j = i * 4;
       const r = data[j], g = data[j + 1], b = data[j + 2];
       const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
-      if (maxC < 40) continue; // trop sombre
+      if (maxC < 35) continue; // trop sombre (seuil légèrement abaissé)
       const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
       const sat = (maxC - minC) / maxC;
-      if (sat > 0.22) {
-        mask[i] = 1;
-        maskCount++;
+      if (sat > 0.18) {  // seuil abaissé pour mieux capter les couleurs pâles
+        rawMask[i] = 1;
+        rawMaskCount++;
       }
     }
 
     const debug = (++_detectCounter % 10 === 0);
-    if (maskCount < W * H * 0.015) {
-      if (debug) console.log('[calib] no colorful pixels', { maskCount, pct: (maskCount / (W * H) * 100).toFixed(1) + '%' });
+    if (rawMaskCount < W * H * 0.012) {
+      if (debug) console.log('[calib] no colorful pixels', { rawMaskCount, pct: (rawMaskCount / (W * H) * 100).toFixed(1) + '%' });
       return null;
     }
 
-    // 2) Plus grande composante connexe (BFS itératif, 4-connectivité)
+    // 2) Fermeture morphologique : comble les trous entre cellules colorées
+    //    (cellules blanches, bordures, reflets). Rayon = 3px sur 320px ≈ 1%.
+    const mask = morphClose(rawMask, W, H, 3);
+    let maskCount = 0;
+    for (let i = 0; i < W * H; i++) if (mask[i]) maskCount++;
+
+    // 3) Plus grande composante connexe (BFS itératif, 4-connectivité)
     const visited = new Uint8Array(W * H);
     const stack = new Int32Array(W * H);
     let bestComp = null;
@@ -496,27 +675,41 @@ window.Calibration = (function() {
       return null;
     }
 
-    // 3) Extraire les 4 coins extrêmes
-    let tlS = Infinity, brS = -Infinity, trS = -Infinity, blS = Infinity;
-    let tlX = 0, tlY = 0, trX = 0, trY = 0, blX = 0, blY = 0, brX = 0, brY = 0;
+    // 4) Coins par percentile : trie les scores (x+y) et (x-y) puis prend
+    //    le 2e percentile au lieu de l'extrême pur → robuste aux outliers.
+    const PERCENTILE = 0.02; // 2%
+    const scores = new Array(bestComp.length);
+    for (let k = 0; k < bestComp.length; k++) {
+      const p = bestComp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      scores[k] = { x, y, xPy: x + y, xMy: x - y };
+    }
+
+    // Trier par x+y pour TL (min) et BR (max)
+    scores.sort((a, b) => a.xPy - b.xPy);
+    const idxLow = Math.floor(scores.length * PERCENTILE);
+    const idxHigh = Math.floor(scores.length * (1 - PERCENTILE));
+    const tlPt = scores[Math.max(0, idxLow)];
+    const brPt = scores[Math.min(scores.length - 1, idxHigh)];
+
+    // Trier par x-y pour TR (max) et BL (min)
+    scores.sort((a, b) => a.xMy - b.xMy);
+    const blPt = scores[Math.max(0, idxLow)];
+    const trPt = scores[Math.min(scores.length - 1, idxHigh)];
+
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (let k = 0; k < bestComp.length; k++) {
       const p = bestComp[k];
       const x = p % W;
       const y = (p - x) / W;
-      const xPy = x + y;
-      const xMy = x - y;
-      if (xPy < tlS) { tlS = xPy; tlX = x; tlY = y; }
-      if (xPy > brS) { brS = xPy; brX = x; brY = y; }
-      if (xMy > trS) { trS = xMy; trX = x; trY = y; }
-      if (xMy < blS) { blS = xMy; blX = x; blY = y; }
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
 
-    // 4) Sanity checks (plus permissifs)
+    // 5) Sanity checks
     const bboxW = maxX - minX + 1;
     const bboxH = maxY - minY + 1;
     if (bboxW < W * 0.12 || bboxH < H * 0.12) {
@@ -529,20 +722,37 @@ window.Calibration = (function() {
       return null;
     }
 
+    // Taux de remplissage : la composante doit remplir au moins 35% de sa bbox
+    const fillRatio = bestSize / (bboxW * bboxH);
+    if (fillRatio < 0.35) {
+      if (debug) console.log('[calib] fill ratio too low', { fillRatio: fillRatio.toFixed(2) });
+      return null;
+    }
+
+    const rawCorners = [
+      { x: tlPt.x / W, y: tlPt.y / H },
+      { x: trPt.x / W, y: trPt.y / H },
+      { x: blPt.x / W, y: blPt.y / H },
+      { x: brPt.x / W, y: brPt.y / H }
+    ];
+
+    // Validation de convexité
+    if (!isConvexQuad(rawCorners)) {
+      if (debug) console.log('[calib] non-convex quad, rejected');
+      return null;
+    }
+
     if (debug) {
       console.log('[calib] ✓ detected', {
         size: (bestSize / (W * H) * 100).toFixed(1) + '%',
         bbox: bboxW + 'x' + bboxH,
-        ar: ar.toFixed(2)
+        ar: ar.toFixed(2),
+        fill: (fillRatio * 100).toFixed(0) + '%'
       });
     }
 
-    return [
-      { x: tlX / W, y: tlY / H },
-      { x: trX / W, y: trY / H },
-      { x: blX / W, y: blY / H },
-      { x: brX / W, y: brY / H }
-    ];
+    // 6) Lissage temporel EMA
+    return smoothCorners(rawCorners);
   }
 
   function drawPreviewQuad(pts) {
@@ -555,13 +765,8 @@ window.Calibration = (function() {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // pts sont en vidéo-normalisé → convertir en display-normalisé pour dessiner
-    const pxs = pts.map(p => {
-      const dn = (window.VideoCoords && video.videoWidth)
-        ? VideoCoords.videoToDisplay(p.x, p.y, video)
-        : p;
-      return { x: dn.x * canvas.width, y: dn.y * canvas.height };
-    });
+    // Convertir coords vidéo natives [0,1] → pixels CSS dans le canvas
+    const pxs = pts.map(p => videoNormToCss(p.x, p.y, video));
 
     // Quadrilatère rempli
     ctx.beginPath();
@@ -673,6 +878,7 @@ window.Calibration = (function() {
   return {
     load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
+    cssToVideoNorm, videoNormToCss,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
     renderProfilesUI, promptAndSaveProfile,
     setReturnToOnce

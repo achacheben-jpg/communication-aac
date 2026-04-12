@@ -66,7 +66,7 @@ window.Camera = (function() {
         }
       } else {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 } },
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false
         });
         v.srcObject = stream;
@@ -323,14 +323,10 @@ window.Camera = (function() {
       setDetectionState('detected');
 
       // Dessin curseur vert = position brute du pied détecté
-      // footPos est en vidéo-normalisé → convertir en display pour le dessin
-      const footDisplay = (window.VideoCoords && v.videoWidth)
-        ? VideoCoords.videoToDisplay(footPos.x, footPos.y, v)
-        : footPos;
-      const footDX = footDisplay.x * c.width;
-      const footDY = footDisplay.y * c.height;
+      // Convertir coords vidéo natives → pixels CSS pour le canvas
+      const footCss = Calibration.videoNormToCss(footPos.x, footPos.y, v);
       ctx.beginPath();
-      ctx.arc(footDX, footDY, 14, 0, Math.PI * 2);
+      ctx.arc(footCss.x, footCss.y, 14, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(29,158,117,0.55)';
       ctx.fill();
       ctx.strokeStyle = 'white';
@@ -368,27 +364,26 @@ window.Camera = (function() {
       }
 
       // ═══ POINT ROUGE : endroit réellement sélectionné ═══
-      // boardUVToCam retourne en vidéo-normalisé → convertir en display pour le dessin
-      const targetCamV = boardUVToCam(corrected);
-      if (targetCamV) {
-        const targetDisplay = (window.VideoCoords && v.videoWidth)
-          ? VideoCoords.videoToDisplay(targetCamV.x, targetCamV.y, v)
-          : targetCamV;
-
+      // On mappe le UV corrigé (dans le tableau) vers la caméra via
+      // bilinéaire forward, pour visualiser exactement où le système
+      // pense que le pied pointe (après application de l'offset vertical).
+      const targetCam = boardUVToCam(corrected);
+      if (targetCam) {
+        const targetCss = Calibration.videoNormToCss(targetCam.x, targetCam.y, v);
         // Ligne pointillée entre pied brut et point de sélection
         ctx.save();
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = 'rgba(231,76,60,0.5)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(footDX, footDY);
-        ctx.lineTo(targetDisplay.x * c.width, targetDisplay.y * c.height);
+        ctx.moveTo(footCss.x, footCss.y);
+        ctx.lineTo(targetCss.x, targetCss.y);
         ctx.stroke();
         ctx.restore();
 
         // Point rouge pulsant + croix centrale
-        const tx = targetDisplay.x * c.width;
-        const ty = targetDisplay.y * c.height;
+        const tx = targetCss.x;
+        const ty = targetCss.y;
         ctx.beginPath();
         ctx.arc(tx, ty, 18, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(231,76,60,0.3)';
@@ -555,13 +550,19 @@ window.Camera = (function() {
   }
 
   function drawCalibOverlay(ctx, canvas) {
-    const v = document.getElementById('video-live');
-    const pts = Calibration.getPoints().map(p => {
-      const dn = (window.VideoCoords && v && v.videoWidth)
-        ? VideoCoords.videoToDisplay(p.x, p.y, v)
-        : p;
-      return { x: dn.x * canvas.width, y: dn.y * canvas.height };
-    });
+    const videoEl = document.getElementById('video-live');
+    const rawPts = Calibration.getPoints();
+    const pts = rawPts.map(p => Calibration.videoNormToCss(p.x, p.y, videoEl));
+    if (!drawCalibOverlay._logged) {
+      drawCalibOverlay._logged = true;
+      console.log('[camera] drawCalibOverlay', {
+        rawPts,
+        cssPts: pts.map(p => [p.x.toFixed(1), p.y.toFixed(1)]),
+        canvas: [canvas.width, canvas.height],
+        video: [videoEl.clientWidth, videoEl.clientHeight],
+        videoNative: [videoEl.videoWidth, videoEl.videoHeight]
+      });
+    }
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     ctx.lineTo(pts[1].x, pts[1].y);
