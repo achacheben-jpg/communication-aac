@@ -420,14 +420,16 @@ window.Calibration = (function() {
   }
 
   // ═══════════════════════════════════════════
-  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7 — améliorée)
+  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7 v2)
   // ═══════════════════════════════════════════
-  // Algorithme amélioré :
-  //   1. Masque saturation + fermeture morphologique (comble les trous blancs)
-  //   2. Plus grande composante connexe (BFS, 4-connectivité)
-  //   3. Coins par percentile (robuste aux outliers) au lieu d'extrême unique
-  //   4. Validation : taille, ratio, convexité, taux de remplissage
-  //   5. Lissage temporel (EMA) pour stabiliser les coins entre frames
+  // Algorithme v2 — améliorations :
+  //   1. Masque saturation (seuil 0.20) + fermeture morphologique agressive (r=6)
+  //   2. Flood-fill depuis les bords → détection des zones enclavées (cellules blanches)
+  //   3. Seconde fermeture légère (r=3) pour lisser
+  //   4. Plus grande composante connexe (BFS, 4-connectivité)
+  //   5. Coins par percentile 1% (plus serré grâce au masque amélioré)
+  //   6. Validation : taille, ratio, convexité, taux de remplissage
+  //   7. Lissage temporel (EMA) pour stabiliser les coins entre frames
 
   // Historique pour lissage temporel des coins détectés
   let _smoothedCorners = null;  // [TL,TR,BL,BR] lissé
@@ -500,43 +502,51 @@ window.Calibration = (function() {
 
   /** Fermeture morphologique sur un masque binaire (Uint8Array) de taille W×H.
    *  Dilate puis érode avec un noyau carré de rayon `r` pixels.
-   *  Comble les trous (cellules blanches entre cellules colorées). */
+   *  Comble les trous (cellules blanches entre cellules colorées).
+   *  Optimisé via image intégrale : O(W×H) au lieu de O(W×H×r²). */
   function morphClose(mask, W, H, r) {
     const N = W * H;
+    const fullArea = (2 * r + 1) * (2 * r + 1);
+
+    // Image intégrale pour requêtes O(1) par fenêtre
+    function buildInteg(src) {
+      const ig = new Int32Array(N);
+      for (let y = 0; y < H; y++) {
+        let rs = 0;
+        for (let x = 0; x < W; x++) {
+          rs += src[y * W + x];
+          ig[y * W + x] = rs + (y > 0 ? ig[(y - 1) * W + x] : 0);
+        }
+      }
+      return ig;
+    }
+
+    function qry(ig, x1, y1, x2, y2) {
+      if (x1 < 0) x1 = 0;
+      if (y1 < 0) y1 = 0;
+      if (x2 >= W) x2 = W - 1;
+      if (y2 >= H) y2 = H - 1;
+      let s = ig[y2 * W + x2];
+      if (x1 > 0) s -= ig[y2 * W + (x1 - 1)];
+      if (y1 > 0) s -= ig[(y1 - 1) * W + x2];
+      if (x1 > 0 && y1 > 0) s += ig[(y1 - 1) * W + (x1 - 1)];
+      return s;
+    }
+
+    // Dilatation : au moins un voisin à 1 → 1
+    const ig1 = buildInteg(mask);
     const tmp = new Uint8Array(N);
-    // Dilatation : si au moins un voisin dans le carré (2r+1)×(2r+1) est à 1 → 1
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        let found = 0;
-        for (let dy = -r; dy <= r && !found; dy++) {
-          const ny = y + dy;
-          if (ny < 0 || ny >= H) continue;
-          for (let dx = -r; dx <= r && !found; dx++) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= W) continue;
-            if (mask[ny * W + nx]) found = 1;
-          }
-        }
-        tmp[y * W + x] = found;
-      }
-    }
-    // Érosion : si tous les voisins dans le carré (2r+1)×(2r+1) sont à 1 → 1
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++)
+        if (qry(ig1, x - r, y - r, x + r, y + r) > 0) tmp[y * W + x] = 1;
+
+    // Érosion : tous les voisins à 1 → 1 (bords → 0, comme avant)
+    const ig2 = buildInteg(tmp);
     const out = new Uint8Array(N);
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        let allOk = 1;
-        for (let dy = -r; dy <= r && allOk; dy++) {
-          const ny = y + dy;
-          if (ny < 0 || ny >= H) { allOk = 0; break; }
-          for (let dx = -r; dx <= r && allOk; dx++) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= W) { allOk = 0; break; }
-            if (!tmp[ny * W + nx]) allOk = 0;
-          }
-        }
-        out[y * W + x] = allOk;
-      }
-    }
+    for (let y = r; y < H - r; y++)
+      for (let x = r; x < W - r; x++)
+        if (qry(ig2, x - r, y - r, x + r, y + r) === fullArea) out[y * W + x] = 1;
+
     return out;
   }
 
@@ -588,7 +598,18 @@ window.Calibration = (function() {
 
   /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
    *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
-   *  ou null si la détection échoue. */
+   *  ou null si la détection échoue.
+   *
+   *  Algorithme amélioré (v2) :
+   *  1. Masque saturation (seuil 0.20) pour pixels fortement colorés
+   *  2. Fermeture morphologique agressive (r=6) pour fusionner les cellules
+   *  3. Flood-fill depuis les bords pour détecter les zones enclavées
+   *     → les cellules blanches/neutres ENTOURÉES par la zone colorée
+   *       sont automatiquement incluses dans le masque
+   *  4. Seconde fermeture légère (r=3) pour lisser
+   *  5. Plus grande composante connexe (BFS)
+   *  6. Coins par percentile 1% (plus serré grâce au masque amélioré)
+   *  7. Validation + lissage temporel EMA */
   function detectBoardCorners(video) {
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 360;
@@ -606,40 +627,84 @@ window.Calibration = (function() {
     try { data = ctx.getImageData(0, 0, W, H).data; }
     catch (e) { console.warn('[calib] getImageData failed', e); return null; }
 
-    // 1) Masque de saturation : pixels colorés = probablement tableau.
-    const rawMask = new Uint8Array(W * H);
-    let rawMaskCount = 0;
-    for (let i = 0; i < W * H; i++) {
+    const N = W * H;
+
+    // ── 1) Masque couleur : pixels à saturation élevée ──
+    // Seuil 0.20 (légèrement relevé vs 0.18) pour réduire les faux positifs
+    // (peau, carton beige) tout en captant les cellules colorées du tableau.
+    const colorMask = new Uint8Array(N);
+    let colorCount = 0;
+    for (let i = 0; i < N; i++) {
       const j = i * 4;
       const r = data[j], g = data[j + 1], b = data[j + 2];
       const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
-      if (maxC < 35) continue; // trop sombre (seuil légèrement abaissé)
+      if (maxC < 35) continue;
       const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
       const sat = (maxC - minC) / maxC;
-      if (sat > 0.18) {  // seuil abaissé pour mieux capter les couleurs pâles
-        rawMask[i] = 1;
-        rawMaskCount++;
+      if (sat > 0.20) {
+        colorMask[i] = 1;
+        colorCount++;
       }
     }
 
     const debug = (++_detectCounter % 10 === 0);
-    if (rawMaskCount < W * H * 0.012) {
-      if (debug) console.log('[calib] no colorful pixels', { rawMaskCount, pct: (rawMaskCount / (W * H) * 100).toFixed(1) + '%' });
+    if (colorCount < N * 0.008) {
+      if (debug) console.log('[calib] no colorful pixels', { colorCount, pct: (colorCount / N * 100).toFixed(1) + '%' });
       return null;
     }
 
-    // 2) Fermeture morphologique : comble les trous entre cellules colorées
-    //    (cellules blanches, bordures, reflets). Rayon = 3px sur 320px ≈ 1%.
-    const mask = morphClose(rawMask, W, H, 3);
-    let maskCount = 0;
-    for (let i = 0; i < W * H; i++) if (mask[i]) maskCount++;
+    // ── 2) Fermeture morphologique agressive (rayon 6) ──
+    // Sur 320px, rayon 6 ≈ 2% : comble les espaces entre cellules colorées
+    // et fusionne les cellules adjacentes en un bloc continu.
+    const closed = morphClose(colorMask, W, H, 6);
 
-    // 3) Plus grande composante connexe (BFS itératif, 4-connectivité)
-    const visited = new Uint8Array(W * H);
-    const stack = new Int32Array(W * H);
+    // ── 3) Flood-fill depuis les bords : détecter les zones enclavées ──
+    // Les cellules blanches/neutres ENTOURÉES par la zone colorée font partie
+    // du tableau. On inonde depuis les bords de l'image pour marquer
+    // l'extérieur, puis tout pixel non-extérieur est considéré comme intérieur.
+    const exterior = new Uint8Array(N);
+    const ffStack = new Int32Array(N);
+    let ffTop = 0;
+
+    // Graines : pixels de bord non couverts par le masque fermé
+    for (let x = 0; x < W; x++) {
+      if (!closed[x])              { exterior[x] = 1;              ffStack[ffTop++] = x; }
+      const bi = (H - 1) * W + x;
+      if (!closed[bi])             { exterior[bi] = 1;             ffStack[ffTop++] = bi; }
+    }
+    for (let y = 1; y < H - 1; y++) {
+      const li = y * W;
+      if (!closed[li])             { exterior[li] = 1;             ffStack[ffTop++] = li; }
+      const ri = y * W + W - 1;
+      if (!closed[ri])             { exterior[ri] = 1;             ffStack[ffTop++] = ri; }
+    }
+
+    // Propagation BFS 4-connectivité : seuls les pixels non-masqués propagent
+    while (ffTop > 0) {
+      const p = ffStack[--ffTop];
+      const px = p % W;
+      const py = (p - px) / W;
+      if (px > 0     && !exterior[p - 1] && !closed[p - 1]) { exterior[p - 1] = 1; ffStack[ffTop++] = p - 1; }
+      if (px < W - 1 && !exterior[p + 1] && !closed[p + 1]) { exterior[p + 1] = 1; ffStack[ffTop++] = p + 1; }
+      if (py > 0     && !exterior[p - W] && !closed[p - W]) { exterior[p - W] = 1; ffStack[ffTop++] = p - W; }
+      if (py < H - 1 && !exterior[p + W] && !closed[p + W]) { exterior[p + W] = 1; ffStack[ffTop++] = p + W; }
+    }
+
+    // Masque rempli : zone colorée fermée + zones intérieures enclavées
+    const filled = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      filled[i] = (closed[i] || !exterior[i]) ? 1 : 0;
+    }
+
+    // ── 4) Seconde fermeture légère pour lisser les contours ──
+    const mask = morphClose(filled, W, H, 3);
+
+    // ── 5) Plus grande composante connexe (BFS itératif, 4-connectivité) ──
+    const visited = new Uint8Array(N);
+    const stack = new Int32Array(N);
     let bestComp = null;
     let bestSize = 0;
-    for (let start = 0; start < W * H; start++) {
+    for (let start = 0; start < N; start++) {
       if (!mask[start] || visited[start]) continue;
       let top = 0;
       stack[top++] = start;
@@ -670,14 +735,15 @@ window.Calibration = (function() {
       if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
     }
 
-    if (!bestComp || bestSize < W * H * 0.008) {
-      if (debug) console.log('[calib] component too small', { bestSize, pct: (bestSize / (W * H) * 100).toFixed(1) + '%' });
+    if (!bestComp || bestSize < N * 0.008) {
+      if (debug) console.log('[calib] component too small', { bestSize, pct: (bestSize / N * 100).toFixed(1) + '%' });
       return null;
     }
 
-    // 4) Coins par percentile : trie les scores (x+y) et (x-y) puis prend
-    //    le 2e percentile au lieu de l'extrême pur → robuste aux outliers.
-    const PERCENTILE = 0.02; // 2%
+    // ── 6) Coins par percentile 1% ──
+    // Plus serré que l'ancien 2% grâce à la qualité du masque amélioré
+    // (flood-fill élimine les trous internes → contour plus propre).
+    const PERCENTILE = 0.01;
     const scores = new Array(bestComp.length);
     for (let k = 0; k < bestComp.length; k++) {
       const p = bestComp[k];
@@ -709,7 +775,7 @@ window.Calibration = (function() {
       if (y > maxY) maxY = y;
     }
 
-    // 5) Sanity checks
+    // ── 7) Sanity checks ──
     const bboxW = maxX - minX + 1;
     const bboxH = maxY - minY + 1;
     if (bboxW < W * 0.12 || bboxH < H * 0.12) {
@@ -744,14 +810,16 @@ window.Calibration = (function() {
 
     if (debug) {
       console.log('[calib] ✓ detected', {
-        size: (bestSize / (W * H) * 100).toFixed(1) + '%',
+        size: (bestSize / N * 100).toFixed(1) + '%',
         bbox: bboxW + 'x' + bboxH,
         ar: ar.toFixed(2),
-        fill: (fillRatio * 100).toFixed(0) + '%'
+        fill: (fillRatio * 100).toFixed(0) + '%',
+        colorPixels: colorCount,
+        filledPixels: bestSize
       });
     }
 
-    // 6) Lissage temporel EMA
+    // 8) Lissage temporel EMA
     return smoothCorners(rawCorners);
   }
 
