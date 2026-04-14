@@ -490,10 +490,20 @@ window.Calibration = (function() {
   function save() {
     localStorage.setItem(POINTS_KEY, JSON.stringify(points));
     localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
-    // Efface l'état de suivi pour forcer une capture de templates neuve
-    // lors du prochain frame en mode caméra principal.
-    stopTracking();
     console.log('[calib] save() points =', JSON.stringify(points));
+  }
+
+  /** Positionne les 4 coins sans passer par le flux de tap séquentiel.
+   *  Utilisé par le mode "vidéo chargée" où l'utilisateur tape sur
+   *  video-live directement, pour que le résultat soit injecté dans
+   *  Calibration sans retourner sur l'écran de calibration. */
+  function setPoints(pts) {
+    if (!pts || pts.length !== 4) return false;
+    points = pts.map(p => ({ x: p.x, y: p.y }));
+    step = 4;
+    state = 'done';
+    stopTracking();         // force re-capture des templates
+    return true;
   }
 
   // ═══════════════════════════════════════════
@@ -1461,7 +1471,7 @@ window.Calibration = (function() {
   }
 
   return {
-    load, getPoints, reset, startCam, action, auto, startManualTap, stopCam, save, isCalibrated,
+    load, getPoints, setPoints, reset, startCam, action, auto, startManualTap, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
     cssToVideoNorm, videoNormToCss,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,

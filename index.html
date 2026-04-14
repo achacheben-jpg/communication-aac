@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v15 · suivi template des 4 coins</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v16 · vidéo chargée : cadrage sur la même frame</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -220,6 +220,21 @@
     <div id="foot-badge" class="foot-badge">
       <div class="foot-badge-dot"></div>
       <span id="foot-badge-text">cherche le pied</span>
+    </div>
+    <!-- Calibration inline pour vidéo chargée : affichage sur la MÊME
+         vidéo, paused, l'utilisateur tape 4 coins puis ▶ Démarrer -->
+    <div id="video-calib-overlay" style="display:none;">
+      <div class="vcalib-msg" id="vcalib-msg">👆 Touchez <b>HAUT-GAUCHE</b> du tableau</div>
+      <div class="vcalib-dots">
+        <div class="step-dot current" id="vcalib-dot-0"></div>
+        <div class="step-dot" id="vcalib-dot-1"></div>
+        <div class="step-dot" id="vcalib-dot-2"></div>
+        <div class="step-dot" id="vcalib-dot-3"></div>
+      </div>
+      <div class="vcalib-actions">
+        <button class="btn-secondary" id="vcalib-reset-btn" onclick="Camera.resetVideoCalib()">↺ Recommencer</button>
+        <button class="btn-primary" id="vcalib-play-btn" style="display:none;" onclick="Camera.beginVideoPlayback()">▶ Démarrer</button>
+      </div>
     </div>
   </div>
 
