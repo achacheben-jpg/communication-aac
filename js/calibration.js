@@ -312,13 +312,91 @@ window.Calibration = (function() {
     auto();
   }
 
-  /** Arme uniquement l'écoute du tap manuel comme fallback.
-   *  N'enclenche pas l'état 'tapping' : cela se fera au premier tap réel. */
+  // État du drag des poignées de coin (pour ajustement fin post-détection)
+  let draggingHandle = -1; // index du coin en cours de drag (0-3), -1 sinon
+  const HANDLE_GRAB_RADIUS = 30; // rayon en CSS px pour grab une poignée
+
+  /** Arme l'écoute tap + drag sur le canvas.
+   *  - Si 4 coins déjà présents : le tap près d'un coin lance un drag
+   *    pour ajuster sa position, n'importe où ailleurs n'a pas d'effet.
+   *  - Sinon : le tap ajoute le prochain coin manuellement (flux original). */
   function armManual() {
     const canvas = document.getElementById('canvas-calib');
     if (!canvas) return;
     canvas.style.cursor = 'crosshair';
-    canvas.ontouchend = canvas.onclick = handleTap;
+    canvas.ontouchstart = onCanvasDown;
+    canvas.ontouchmove = onCanvasMove;
+    canvas.ontouchend = onCanvasUp;
+    canvas.onmousedown = onCanvasDown;
+    canvas.onmousemove = onCanvasMove;
+    canvas.onmouseup = onCanvasUp;
+    canvas.onmouseleave = onCanvasUp;
+    canvas.onclick = null; // on remplace par mousedown/up
+  }
+
+  function getEventCss(e) {
+    const canvas = document.getElementById('canvas-calib');
+    const rect = canvas.getBoundingClientRect();
+    const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+    return {
+      rect,
+      x: t.clientX - rect.left,
+      y: t.clientY - rect.top
+    };
+  }
+
+  /** Trouve la poignée de coin la plus proche (si dans le rayon), sinon -1 */
+  function findHandleAt(cssPxX, cssPxY) {
+    if (points.length !== 4) return -1;
+    const v = document.getElementById('video-calib');
+    let closest = -1;
+    let minDist = HANDLE_GRAB_RADIUS;
+    for (let i = 0; i < 4; i++) {
+      const css = videoNormToCss(points[i].x, points[i].y, v);
+      const d = Math.hypot(cssPxX - css.x, cssPxY - css.y);
+      if (d < minDist) { minDist = d; closest = i; }
+    }
+    return closest;
+  }
+
+  function onCanvasDown(e) {
+    e.preventDefault();
+    const { x, y } = getEventCss(e);
+
+    // Si on a déjà 4 coins (auto ou manuel complet), tenter le drag
+    if (points.length === 4) {
+      const h = findHandleAt(x, y);
+      if (h >= 0) {
+        // Grab une poignée : stop live auto, passer en mode ajustement
+        liveLockedByUser = true;
+        stopLive();
+        draggingHandle = h;
+        state = 'done';
+        return;
+      }
+      // Tap hors d'une poignée en état done → ignore (évite les reset accidentels)
+      return;
+    }
+
+    // Moins de 4 coins : flux tap manuel séquentiel (original)
+    handleTap(e);
+  }
+
+  function onCanvasMove(e) {
+    if (draggingHandle < 0) return;
+    e.preventDefault();
+    const { x, y } = getEventCss(e);
+    const v = document.getElementById('video-calib');
+    const norm = cssToVideoNorm(x, y, v);
+    points[draggingHandle] = { x: norm.x, y: norm.y };
+    drawPreviewQuad(points);
+  }
+
+  function onCanvasUp(e) {
+    if (draggingHandle < 0) return;
+    e.preventDefault();
+    draggingHandle = -1;
+    drawPreviewQuad(points);
   }
 
   function handleTap(e) {
@@ -343,24 +421,15 @@ window.Calibration = (function() {
     }
     state = 'tapping';
 
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-    const cssPxX = clientX - rect.left;
-    const cssPxY = clientY - rect.top;
+    const { rect } = getEventCss(e);
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    const cssPxX = t.clientX - rect.left;
+    const cssPxY = t.clientY - rect.top;
 
     // Convertir la position CSS → coordonnées vidéo natives [0,1]
     // pour tenir compte de object-fit:cover (zoom/crop)
     const videoEl = document.getElementById('video-calib');
     const norm = cssToVideoNorm(cssPxX, cssPxY, videoEl);
-
-    console.log('[calib] tap #' + (step + 1), {
-      cssPx: [cssPxX.toFixed(1), cssPxY.toFixed(1)],
-      container: [videoEl.clientWidth, videoEl.clientHeight],
-      videoNative: [videoEl.videoWidth, videoEl.videoHeight],
-      norm: [norm.x.toFixed(3), norm.y.toFixed(3)],
-      mapping: containMapping(videoEl)
-    });
 
     points.push({ x: norm.x, y: norm.y });
     drawPoint(ctx, cssPxX, cssPxY, step + 1);
@@ -374,10 +443,11 @@ window.Calibration = (function() {
       if (d) d.className = 'step-dot current';
     } else {
       state = 'done';
-      setCalibMsg('✅ <b>4 coins enregistrés manuellement</b>. Touchez <b>Utiliser →</b>.');
+      setCalibMsg('✅ <b>4 coins enregistrés</b>. Vous pouvez <b>glisser chaque coin</b> pour affiner, puis toucher <b>Utiliser →</b>.');
       const btn = document.getElementById('calib-action-btn');
       if (btn) btn.textContent = 'Utiliser →';
       setActionEnabled(true);
+      drawPreviewQuad(points);
     }
   }
 
@@ -473,7 +543,7 @@ window.Calibration = (function() {
         if (d) d.className = 'step-dot done';
       }
       drawPreviewQuad(detected);
-      setCalibMsg('✅ <b>Tableau détecté !</b> Vérifiez la zone verte et touchez <b>Utiliser →</b>. Bougez la caméra pour re-détecter si besoin.');
+      setCalibMsg('✅ <b>Tableau détecté !</b> Vous pouvez <b>glisser chaque coin au doigt</b> pour affiner précisément, puis toucher <b>Utiliser →</b>.');
       const btn = document.getElementById('calib-action-btn');
       if (btn) btn.textContent = 'Utiliser →';
       setActionEnabled(true);
@@ -781,15 +851,22 @@ window.Calibration = (function() {
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Marqueurs de coin
+    // Poignées de coin (draggables après détection/tap complet)
     const labels = ['HG', 'HD', 'BG', 'BD'];
     pxs.forEach((p, i) => {
+      const isActive = (draggingHandle === i);
+      // Cercle extérieur "halo" pour indiquer que c'est draggable
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(29,158,117,0.9)';
+      ctx.arc(p.x, p.y, isActive ? 28 : 22, 0, Math.PI * 2);
+      ctx.fillStyle = isActive ? 'rgba(240,192,48,0.3)' : 'rgba(29,158,117,0.25)';
+      ctx.fill();
+      // Poignée principale
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+      ctx.fillStyle = isActive ? 'rgba(240,192,48,0.95)' : 'rgba(29,158,117,0.95)';
       ctx.fill();
       ctx.strokeStyle = 'white';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.5;
       ctx.stroke();
       ctx.fillStyle = 'white';
       ctx.font = 'bold 11px "DM Sans", sans-serif';
