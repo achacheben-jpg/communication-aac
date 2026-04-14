@@ -1,7 +1,7 @@
 // Service Worker — cache offline-first
 // IMPORTANT : bumper CACHE_VERSION à chaque déploiement pour invalider
 // l'ancien cache sur les clients installés.
-const CACHE_VERSION = 'aac-v17-drag-corners';
+const CACHE_VERSION = 'aac-v22-video-unified';
 const CORE_ASSETS = [
   './',
   './index.html',
