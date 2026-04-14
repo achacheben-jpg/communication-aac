@@ -98,7 +98,12 @@ window.Calibration = (function() {
     return points;
   }
 
-  function getPoints() { return points; }
+  function getPoints() {
+    // Si le suivi par template est actif, on renvoie les coins suivis
+    // (qui collent au tableau même si la caméra bouge un peu).
+    if (_trackedPoints) return _trackedPoints;
+    return points;
+  }
 
   // ═══════════════════════════════════════════
   // PROFILS DE CALIBRATION (multiples, nommés)
@@ -485,7 +490,176 @@ window.Calibration = (function() {
   function save() {
     localStorage.setItem(POINTS_KEY, JSON.stringify(points));
     localStorage.setItem(FORMAT_KEY, String(CALIB_FORMAT));
+    // Efface l'état de suivi pour forcer une capture de templates neuve
+    // lors du prochain frame en mode caméra principal.
+    stopTracking();
     console.log('[calib] save() points =', JSON.stringify(points));
+  }
+
+  // ═══════════════════════════════════════════
+  // SUIVI TEMPLATE DES 4 COINS (post-calibration)
+  // ═══════════════════════════════════════════
+  // Une fois que l'utilisateur a validé ses 4 coins (manuel ou auto) et
+  // basculé en mode caméra principal, on capture un petit template en
+  // niveau de gris autour de chaque coin. À chaque frame, on recherche
+  // le meilleur appariement (SAD) dans une petite fenêtre autour de la
+  // position précédente et on met à jour la position du coin avec un
+  // lissage EMA. Résultat : l'overlay vert "suit" le tableau même si la
+  // caméra bouge un peu (tremblements, repositionnement léger).
+
+  const TRACK_W = 320;             // largeur d'analyse (pixels vidéo sous-échantillonnés)
+  const TRACK_TPL = 21;            // taille des templates (impair)
+  const TRACK_SEARCH = 12;         // rayon de recherche (px dans l'échelle TRACK_W)
+  const TRACK_MAX_MEAN_DIFF = 38;  // différence moyenne max par pixel pour accepter le match
+  const TRACK_EMA = 0.55;          // lissage : 1 = aucun, 0 = gel
+
+  let _trackTemplates = null;  // Array<Uint8Array> (4 templates)
+  let _trackedPoints = null;   // Array<{x,y}> coords vidéo-normalisées [0,1]
+  let _trackW = 0;
+  let _trackH = 0;
+  let _trackPoorFrames = 0;    // nb de frames consécutifs avec match médiocre
+
+  function _videoToGray(videoEl) {
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    if (!vw || !vh) return null;
+    const W = TRACK_W;
+    const H = Math.max(120, Math.round(W * vh / vw));
+    const cvs = document.createElement('canvas');
+    cvs.width = W; cvs.height = H;
+    const ctx = cvs.getContext('2d', { willReadFrequently: true });
+    try { ctx.drawImage(videoEl, 0, 0, W, H); }
+    catch (e) { return null; }
+    let data;
+    try { data = ctx.getImageData(0, 0, W, H).data; }
+    catch (e) { return null; }
+    const gray = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      // Luminance Rec.601
+      gray[i] = (299 * data[i * 4] + 587 * data[i * 4 + 1] + 114 * data[i * 4 + 2]) / 1000 | 0;
+    }
+    return { gray, W, H };
+  }
+
+  function _extractTemplate(gray, W, H, cx, cy) {
+    const half = (TRACK_TPL - 1) / 2;
+    const tpl = new Uint8Array(TRACK_TPL * TRACK_TPL);
+    for (let ty = 0; ty < TRACK_TPL; ty++) {
+      const sy = Math.min(H - 1, Math.max(0, cy - half + ty));
+      for (let tx = 0; tx < TRACK_TPL; tx++) {
+        const sx = Math.min(W - 1, Math.max(0, cx - half + tx));
+        tpl[ty * TRACK_TPL + tx] = gray[sy * W + sx];
+      }
+    }
+    return tpl;
+  }
+
+  /** Capture les 4 templates autour des coins calibrés. */
+  function initTracking(videoEl) {
+    stopTracking();
+    if (!isCalibrated()) return false;
+    const img = _videoToGray(videoEl);
+    if (!img) return false;
+    const { gray, W, H } = img;
+    _trackW = W; _trackH = H;
+    _trackTemplates = [];
+    _trackedPoints = [];
+    for (const p of points) {
+      const cx = Math.round(p.x * W);
+      const cy = Math.round(p.y * H);
+      _trackTemplates.push(_extractTemplate(gray, W, H, cx, cy));
+      _trackedPoints.push({ x: p.x, y: p.y });
+    }
+    _trackPoorFrames = 0;
+    return true;
+  }
+
+  /** Recherche chaque template dans une fenêtre autour de sa position
+   *  précédente, met à jour les coins suivis. Conserve la position
+   *  antérieure si le match est trop médiocre (occlusion, mouvement
+   *  trop rapide). */
+  function updateTracking(videoEl) {
+    if (!_trackTemplates || !_trackedPoints) return;
+    const img = _videoToGray(videoEl);
+    if (!img) return;
+    const { gray, W, H } = img;
+    // Si la taille a changé (rotation écran), réinitialiser.
+    if (W !== _trackW || H !== _trackH) { stopTracking(); return; }
+    const half = (TRACK_TPL - 1) / 2;
+    const TPL2 = TRACK_TPL * TRACK_TPL;
+    let poorCount = 0;
+    for (let i = 0; i < 4; i++) {
+      const tpl = _trackTemplates[i];
+      const cxPrev = Math.round(_trackedPoints[i].x * W);
+      const cyPrev = Math.round(_trackedPoints[i].y * H);
+      let bestSAD = Infinity;
+      let bestDX = 0, bestDY = 0;
+      for (let dy = -TRACK_SEARCH; dy <= TRACK_SEARCH; dy++) {
+        const cy = cyPrev + dy;
+        if (cy - half < 0 || cy + half >= H) continue;
+        for (let dx = -TRACK_SEARCH; dx <= TRACK_SEARCH; dx++) {
+          const cx = cxPrev + dx;
+          if (cx - half < 0 || cx + half >= W) continue;
+          let sad = 0;
+          const rowBase = (cy - half) * W + (cx - half);
+          for (let ty = 0; ty < TRACK_TPL; ty++) {
+            const row = rowBase + ty * W;
+            const trow = ty * TRACK_TPL;
+            for (let tx = 0; tx < TRACK_TPL; tx++) {
+              sad += Math.abs(gray[row + tx] - tpl[trow + tx]);
+            }
+            // Early-out : si déjà pire que le meilleur, inutile de continuer
+            if (sad >= bestSAD) break;
+          }
+          if (sad < bestSAD) {
+            bestSAD = sad;
+            bestDX = dx;
+            bestDY = dy;
+          }
+        }
+      }
+      const meanDiff = bestSAD / TPL2;
+      if (meanDiff < TRACK_MAX_MEAN_DIFF) {
+        const newX = (cxPrev + bestDX) / W;
+        const newY = (cyPrev + bestDY) / H;
+        _trackedPoints[i].x = TRACK_EMA * newX + (1 - TRACK_EMA) * _trackedPoints[i].x;
+        _trackedPoints[i].y = TRACK_EMA * newY + (1 - TRACK_EMA) * _trackedPoints[i].y;
+      } else {
+        poorCount++;
+      }
+    }
+    // Si tous les coins ont un mauvais match pendant N frames consécutifs,
+    // on suppose que la caméra a beaucoup bougé → on réinitialise pour
+    // éviter de rester coincé sur une vieille position.
+    if (poorCount === 4) {
+      _trackPoorFrames++;
+      if (_trackPoorFrames > 30) {
+        stopTracking();
+      }
+    } else {
+      _trackPoorFrames = 0;
+    }
+  }
+
+  /** Point d'entrée unique : initialise au premier appel, met à jour ensuite. */
+  function trackFrame(videoEl) {
+    if (!isCalibrated()) return;
+    if (!_trackTemplates) initTracking(videoEl);
+    else updateTracking(videoEl);
+  }
+
+  function stopTracking() {
+    _trackTemplates = null;
+    _trackedPoints = null;
+    _trackW = 0;
+    _trackH = 0;
+    _trackPoorFrames = 0;
+  }
+
+  /** Bouton "↺ Recaler" : force une nouvelle capture de templates à
+   *  partir de la position CALIBRÉE originale. Utile si le suivi dérive. */
+  function recaptureTemplates() {
+    stopTracking();
   }
 
   function isCalibrated() {
@@ -1292,6 +1466,7 @@ window.Calibration = (function() {
     cssToVideoNorm, videoNormToCss,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
     renderProfilesUI, promptAndSaveProfile,
-    setReturnToOnce
+    setReturnToOnce,
+    trackFrame, stopTracking, recaptureTemplates
   };
 })();

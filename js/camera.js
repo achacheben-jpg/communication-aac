@@ -87,6 +87,10 @@ window.Camera = (function() {
       }, 300);
 
       Calibration.load();
+      // Force une nouvelle capture des templates de suivi dès la première
+      // frame : on ne veut pas réutiliser de vieux templates d'une session
+      // caméra précédente.
+      if (Calibration.stopTracking) Calibration.stopTracking();
       if (!Calibration.isCalibrated()) {
         if (window.App) App.setStatus('orange', 'Pas de calibration — touchez 📐');
       }
@@ -304,6 +308,14 @@ window.Camera = (function() {
       c.height = v.clientHeight;
       const ctx = c.getContext('2d');
       ctx.clearRect(0, 0, c.width, c.height);
+
+      // SUIVI TEMPLATE : met à jour les 4 coins calibrés pour qu'ils
+      // suivent le tableau même si la caméra bouge un peu (tremblements,
+      // repositionnement léger). À faire AVANT de dessiner l'overlay.
+      if (Calibration.isCalibrated() && Calibration.trackFrame) {
+        try { Calibration.trackFrame(v); }
+        catch (e) { console.warn('[camera] trackFrame error', e); }
+      }
 
       // Overlay calibration
       if (Calibration.isCalibrated()) drawCalibOverlay(ctx, c);

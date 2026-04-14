@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v14 · fit 4 droites + pointer manuel</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v15 · suivi template des 4 coins</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -100,6 +100,7 @@
     </div>
     <button class="tool-btn" onclick="App.toggleSettings()" title="Réglages">⚙</button>
     <button class="tool-btn" onclick="App.showScreen('favorites'); Favorites.render();" title="Favoris">★</button>
+    <button class="tool-btn" onclick="Calibration.recaptureTemplates()" title="Recaler le cadre sur le tableau">↺</button>
     <button class="tool-btn" onclick="App.showScreen('calib'); Calibration.reset(); Calibration.startCam();" title="Calibration">📐</button>
     <button class="tool-btn" onclick="App.showScreen('home')" title="Accueil">🏠</button>
   </div>
