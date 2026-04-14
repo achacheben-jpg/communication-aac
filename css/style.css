@@ -301,6 +301,46 @@ body {
   width: 100%; height: 100%;
   pointer-events: none;
 }
+/* Quand le flux est en calibration vidéo chargée, le canvas reçoit les taps */
+#camera-live-wrap.video-calibrating #canvas-live {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+/* Agrandir la vidéo pendant la calibration vidéo (même format que playback) */
+#camera-live-wrap.video-calibrating #video-live {
+  max-height: 60vh;
+}
+/* Overlay de calibration vidéo chargée */
+#video-calib-overlay {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 10px 12px;
+  background: linear-gradient(to top, rgba(10,10,15,0.85), rgba(10,10,15,0.25));
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 5;
+}
+#video-calib-overlay .vcalib-msg {
+  font-size: 14px;
+  text-align: center;
+}
+#video-calib-overlay .vcalib-dots {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+#video-calib-overlay .vcalib-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  pointer-events: auto;
+}
+#video-calib-overlay .vcalib-actions button {
+  pointer-events: auto;
+}
 
 /* STATUS BAR */
 .status-bar {

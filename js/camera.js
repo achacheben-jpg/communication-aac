@@ -44,52 +44,110 @@ window.Camera = (function() {
     if (detectActive) { stop(); start(); }
   }
 
+  // ═══════════════════════════════════════════
+  // ÉTAT DE CALIBRATION INLINE (flux vidéo chargée)
+  // ═══════════════════════════════════════════
+  // Quand l'utilisateur charge une vidéo, on affiche la PREMIÈRE FRAME
+  // paused directement dans video-live et on lui demande de taper les
+  // 4 coins du tableau sur cette même frame. Puis ▶ Démarrer relance
+  // la lecture de la MÊME vidéo avec le tracking actif.
+  const VCALIB_LABELS = ['HAUT-GAUCHE', 'HAUT-DROIT', 'BAS-GAUCHE', 'BAS-DROIT'];
+  let videoCalibMode = false;
+  let videoCalibPoints = [];
+  let videoCalibStep = 0;
+
+  function _waitForMetadata(v) {
+    return new Promise((resolve) => {
+      if (v.readyState >= 1 && v.duration && !isNaN(v.duration)) return resolve();
+      const h = () => { v.removeEventListener('loadedmetadata', h); resolve(); };
+      v.addEventListener('loadedmetadata', h);
+      setTimeout(resolve, 3000);
+    });
+  }
+  function _waitForSeek(v) {
+    return new Promise((resolve) => {
+      const h = () => { v.removeEventListener('seeked', h); resolve(); };
+      v.addEventListener('seeked', h);
+      setTimeout(resolve, 800);
+    });
+  }
+  function _syncCanvasSize() {
+    const v = document.getElementById('video-live');
+    const c = document.getElementById('canvas-live');
+    if (!v || !c) return;
+    c.width = v.clientWidth || 320;
+    c.height = v.clientHeight || 240;
+  }
+
   async function start() {
     document.getElementById('camera-live-wrap').classList.add('visible');
     document.getElementById('dwell-wrap').classList.add('visible');
 
     try {
       const v = document.getElementById('video-live');
-      // Source : fichier vidéo chargé OU caméra live
-      if (window.VideoSource && VideoSource.has()) {
+      const hasVideoFile = !!(window.VideoSource && VideoSource.has());
+
+      if (hasVideoFile) {
+        // ═══ FLUX VIDÉO CHARGÉE — tout sur le même élément video-live ═══
         v.srcObject = null;
         v.src = VideoSource.url();
         v.loop = false;
-        v.muted = false;          // garder le son de la vidéo si présent
+        v.muted = false;
         v.playsInline = true;
-        v.currentTime = 0;
-        // Quand la vidéo se termine, afficher la transcription
-        // SAUF en mode entraînement : Training pose son propre handler.
+        // Quand la vidéo se termine, afficher la transcription (sauf training)
         v.onended = trainingMode ? null : onVideoEnded;
-        await v.play();
+
+        // Attendre que les métadonnées soient prêtes, se positionner sur
+        // une frame représentative et PAUSER pour la calibration manuelle.
+        await _waitForMetadata(v);
+        const seekT = Math.min(0.3, (v.duration || 1) * 0.05);
+        try {
+          v.currentTime = seekT;
+          await _waitForSeek(v);
+        } catch (e) {}
+        try { v.pause(); } catch (e) {}
+
         if (!trainingMode) {
           if (window.VideoSource.resetTranscript) VideoSource.resetTranscript();
           if (window.App) App.clearAll && App.clearAll();
         }
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        });
-        v.srcObject = stream;
-        v.src = '';
-        v.onended = null;
-        await v.play();
+
+        Calibration.load();
+        if (Calibration.stopTracking) Calibration.stopTracking();
+
+        await new Promise(r => requestAnimationFrame(r));
+        _syncCanvasSize();
+
+        if (!Calibration.isCalibrated()) {
+          // Pas encore calibré pour cette vidéo → mode calibration inline
+          // sur la frame paused. detectLoop ne démarre pas tant que
+          // l'utilisateur n'a pas touché les 4 coins ET appuyé ▶ Démarrer.
+          startVideoCalibMode();
+          return;
+        }
+        // Déjà calibré → on peut commencer directement (mais on va rejouer
+        // depuis le début pour une expérience cohérente)
+        try { v.currentTime = 0; await _waitForSeek(v); } catch (e) {}
+        await _beginVideoPlaybackInternal(v, /*fromCalib=*/false);
+        return;
       }
+
+      // ═══ FLUX CAMÉRA LIVE ═══
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      v.srcObject = stream;
+      v.src = '';
+      v.onended = null;
+      await v.play();
 
       detectActive = true;
       setDetectionState('searching');
 
-      setTimeout(() => {
-        const c = document.getElementById('canvas-live');
-        c.width = v.clientWidth;
-        c.height = v.clientHeight;
-      }, 300);
+      setTimeout(() => { _syncCanvasSize(); }, 300);
 
       Calibration.load();
-      // Force une nouvelle capture des templates de suivi dès la première
-      // frame : on ne veut pas réutiliser de vieux templates d'une session
-      // caméra précédente.
       if (Calibration.stopTracking) Calibration.stopTracking();
       if (!Calibration.isCalibrated()) {
         if (window.App) App.setStatus('orange', 'Pas de calibration — touchez 📐');
@@ -99,7 +157,6 @@ window.Camera = (function() {
       console.log('[camera] source =', source);
 
       if (source === 'handheld') {
-        // MediaPipe Pose pour corps entier
         if (window.App) App.setStatus('orange', 'Chargement MediaPipe Pose…');
         loadPose().then(() => {
           if (poseInstance && window.App) App.setStatus('green', '👣 Pose actif — cherche le pied');
@@ -109,15 +166,9 @@ window.Camera = (function() {
           usePoseModel = false;
         });
       } else {
-        // Mode caméra fixe : pixels uniquement, pas besoin de MediaPipe
         usePoseModel = false;
         if (window.App) App.setStatus('orange', 'Caméra fixe — cherche le pied');
-        // Capturer une image de fond (sans pied) après 1s pour background subtraction
-        // On ne fait ça QUE pour une vraie caméra live : pour une vidéo chargée,
-        // le premier frame contient probablement déjà le pied en action.
-        if (!(window.VideoSource && VideoSource.has())) {
-          captureBackgroundAfter(1200);
-        }
+        captureBackgroundAfter(1200);
       }
 
       detectLoop();
@@ -125,6 +176,194 @@ window.Camera = (function() {
     } catch (e) {
       if (window.App) App.setStatus('red', 'Erreur caméra : ' + e.message);
     }
+  }
+
+  // ═══════════════════════════════════════════
+  // CALIBRATION INLINE POUR VIDÉO CHARGÉE
+  // ═══════════════════════════════════════════
+
+  function startVideoCalibMode() {
+    videoCalibMode = true;
+    videoCalibPoints = [];
+    videoCalibStep = 0;
+    detectActive = false;
+
+    const wrap = document.getElementById('camera-live-wrap');
+    if (wrap) wrap.classList.add('video-calibrating');
+    const overlay = document.getElementById('video-calib-overlay');
+    if (overlay) overlay.style.display = 'flex';
+
+    for (let i = 0; i < 4; i++) {
+      const d = document.getElementById('vcalib-dot-' + i);
+      if (d) d.className = 'step-dot' + (i === 0 ? ' current' : '');
+    }
+    _updateVCalibMsg();
+
+    const playBtn = document.getElementById('vcalib-play-btn');
+    if (playBtn) playBtn.style.display = 'none';
+
+    const canvas = document.getElementById('canvas-live');
+    canvas.addEventListener('click', onVideoCalibTap, true);
+    canvas.addEventListener('touchend', onVideoCalibTap, true);
+
+    _drawVideoCalibOverlay();
+
+    if (window.App) App.setStatus('blue', 'Touchez les 4 coins du tableau sur la vidéo paused');
+  }
+
+  function _updateVCalibMsg() {
+    const msg = document.getElementById('vcalib-msg');
+    if (!msg) return;
+    if (videoCalibStep < 4) {
+      msg.innerHTML = `👆 Touchez <b>${VCALIB_LABELS[videoCalibStep]}</b> du tableau`;
+    } else {
+      msg.innerHTML = '✅ <b>4 coins pointés</b> — touchez <b>▶ Démarrer</b>';
+    }
+  }
+
+  function onVideoCalibTap(e) {
+    if (!videoCalibMode) return;
+    // Ne pas intercepter les clics sur les boutons de l'overlay
+    const tgt = e.target;
+    if (tgt && (tgt.tagName === 'BUTTON' || tgt.closest('button'))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (videoCalibStep >= 4) return;
+
+    const canvas = document.getElementById('canvas-live');
+    const rect = canvas.getBoundingClientRect();
+    const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+    const cssX = t.clientX - rect.left;
+    const cssY = t.clientY - rect.top;
+
+    const v = document.getElementById('video-live');
+    const norm = Calibration.cssToVideoNorm(cssX, cssY, v);
+    videoCalibPoints.push({ x: norm.x, y: norm.y });
+
+    const dOld = document.getElementById('vcalib-dot-' + videoCalibStep);
+    if (dOld) dOld.className = 'step-dot done';
+    videoCalibStep++;
+
+    if (videoCalibStep < 4) {
+      const dNew = document.getElementById('vcalib-dot-' + videoCalibStep);
+      if (dNew) dNew.className = 'step-dot current';
+    } else {
+      const playBtn = document.getElementById('vcalib-play-btn');
+      if (playBtn) playBtn.style.display = '';
+    }
+    _updateVCalibMsg();
+    _drawVideoCalibOverlay();
+  }
+
+  function resetVideoCalib() {
+    if (!videoCalibMode) return;
+    videoCalibPoints = [];
+    videoCalibStep = 0;
+    for (let i = 0; i < 4; i++) {
+      const d = document.getElementById('vcalib-dot-' + i);
+      if (d) d.className = 'step-dot' + (i === 0 ? ' current' : '');
+    }
+    const playBtn = document.getElementById('vcalib-play-btn');
+    if (playBtn) playBtn.style.display = 'none';
+    _updateVCalibMsg();
+    _drawVideoCalibOverlay();
+  }
+
+  function _drawVideoCalibOverlay() {
+    const c = document.getElementById('canvas-live');
+    const v = document.getElementById('video-live');
+    if (!c || !v) return;
+    _syncCanvasSize();
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+
+    // Dessiner les points déjà placés
+    videoCalibPoints.forEach((p, i) => {
+      const css = Calibration.videoNormToCss(p.x, p.y, v);
+      ctx.beginPath();
+      ctx.arc(css.x, css.y, 14, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(29,158,117,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 13px "DM Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), css.x, css.y);
+    });
+
+    // Quadrilatère une fois les 4 coins posés
+    if (videoCalibPoints.length === 4) {
+      const pxs = videoCalibPoints.map(p => Calibration.videoNormToCss(p.x, p.y, v));
+      ctx.beginPath();
+      ctx.moveTo(pxs[0].x, pxs[0].y);
+      ctx.lineTo(pxs[1].x, pxs[1].y);
+      ctx.lineTo(pxs[3].x, pxs[3].y);
+      ctx.lineTo(pxs[2].x, pxs[2].y);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(29,158,117,0.9)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(29,158,117,0.18)';
+      ctx.fill();
+    }
+  }
+
+  async function beginVideoPlayback() {
+    if (!videoCalibMode || videoCalibPoints.length !== 4) return;
+    const v = document.getElementById('video-live');
+    // Sauvegarder les points dans Calibration
+    if (Calibration.setPoints) Calibration.setPoints(videoCalibPoints);
+    if (Calibration.save) Calibration.save();
+
+    // Capturer les templates MAINTENANT sur la frame EXACTE calibrée
+    // (vidéo toujours paused). Un premier appel à trackFrame fait init.
+    if (Calibration.trackFrame) Calibration.trackFrame(v);
+
+    // Revenir au début de la vidéo pour la lecture complète (transcription
+    // depuis T=0). Le tableau n'a très probablement pas bougé entre T=0 et
+    // la frame de calibration : les templates restent valides, le tracker
+    // prend le relais pour suivre les petits mouvements éventuels.
+    try {
+      v.currentTime = 0;
+      await _waitForSeek(v);
+    } catch (e) {}
+
+    await _beginVideoPlaybackInternal(v, /*fromCalib=*/true);
+  }
+
+  async function _beginVideoPlaybackInternal(v, fromCalib) {
+    videoCalibMode = false;
+    const wrap = document.getElementById('camera-live-wrap');
+    if (wrap) wrap.classList.remove('video-calibrating');
+    const overlay = document.getElementById('video-calib-overlay');
+    if (overlay) overlay.style.display = 'none';
+
+    const canvas = document.getElementById('canvas-live');
+    canvas.removeEventListener('click', onVideoCalibTap, true);
+    canvas.removeEventListener('touchend', onVideoCalibTap, true);
+
+    _syncCanvasSize();
+
+    const source = getSource();
+    if (source === 'handheld') {
+      if (window.App) App.setStatus('orange', 'Chargement MediaPipe Pose…');
+      loadPose().then(() => {
+        if (poseInstance && window.App) App.setStatus('green', '👣 Pose actif — cherche le pied');
+      }).catch((e) => { usePoseModel = false; });
+    } else {
+      usePoseModel = false;
+      if (window.App) App.setStatus('orange', 'Caméra fixe — cherche le pied');
+    }
+
+    detectActive = true;
+    setDetectionState('searching');
+
+    try { await v.play(); } catch (e) { console.warn('[camera] play failed', e); }
+
+    detectLoop();
   }
 
   function stop() {
@@ -136,7 +375,19 @@ window.Camera = (function() {
       try { v.pause(); } catch (e) {}
       v.onended = null;
     }
-    document.getElementById('camera-live-wrap').classList.remove('visible');
+    // Nettoyer l'overlay de calibration vidéo (s'il était actif)
+    videoCalibMode = false;
+    videoCalibPoints = [];
+    videoCalibStep = 0;
+    const wrap = document.getElementById('camera-live-wrap');
+    if (wrap) wrap.classList.remove('video-calibrating', 'visible');
+    const overlay = document.getElementById('video-calib-overlay');
+    if (overlay) overlay.style.display = 'none';
+    const canvas = document.getElementById('canvas-live');
+    if (canvas) {
+      canvas.removeEventListener('click', onVideoCalibTap, true);
+      canvas.removeEventListener('touchend', onVideoCalibTap, true);
+    }
     document.getElementById('dwell-wrap').classList.remove('visible');
     if (window.App) App.setStatus('', 'Mode manuel');
     clearDwell();
@@ -787,6 +1038,7 @@ window.Camera = (function() {
   return {
     start, stop, getLastFootUVBoard, cellCenterUV,
     getSource, setSource, captureBackground,
-    startTraining, stopTrainingAndGetTrace
+    startTraining, stopTrainingAndGetTrace,
+    beginVideoPlayback, resetVideoCalib
   };
 })();

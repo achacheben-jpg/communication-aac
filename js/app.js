@@ -164,9 +164,20 @@ window.App = (function() {
     if (!window.VideoSource) return;
     VideoSource.set(file);
     clearAll();
-    setStatus('blue', `Vidéo "${VideoSource.name()}" chargée — calibration…`);
-    // Aller à la calibration en utilisant la vidéo comme source
-    goCalib();
+    // Invalider l'ancienne calibration : chaque nouvelle vidéo chargée
+    // doit être re-calibrée pour que les coins collent à SON tableau.
+    if (window.Calibration) {
+      if (Calibration.stopTracking) Calibration.stopTracking();
+      if (Calibration.reset) Calibration.reset();
+      try { localStorage.removeItem('calibPoints'); } catch (err) {}
+    }
+    setStatus('blue', `Vidéo "${VideoSource.name()}" chargée — touchez les 4 coins du tableau`);
+    // Flux unifié : on va DIRECTEMENT au mode caméra principal.
+    //   - La vidéo se charge dans video-live, pause sur une frame.
+    //   - L'utilisateur tape les 4 coins sur la frame paused.
+    //   - Puis ▶ Démarrer : même vidéo, même élément, templates capturés
+    //     sur la frame exacte de calibration → le tracking suit le tableau.
+    goMain('camera');
     // Reset l'input pour pouvoir re-sélectionner le même fichier plus tard
     e.target.value = '';
   }
