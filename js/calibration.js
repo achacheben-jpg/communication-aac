@@ -730,23 +730,66 @@ window.Calibration = (function() {
     return { comp: bestComp, size: bestSize };
   }
 
+  /** Couverture des 4 arêtes d'un quadrilatère par des pixels rouges.
+   *  Échantillonne le long de chaque arête (TL→TR→BR→BL→TL) et vérifie
+   *  qu'un pixel rouge est présent dans un rayon de `tolerance` pixels.
+   *  Retourne un ratio [0,1]. Permet de rejeter les cas où certains coins
+   *  sont "étirés" par des pixels parasites loin du vrai cadre. */
+  function edgeCoverage(cornersPx, redMask, W, H, tolerance) {
+    tolerance = tolerance || 3;
+    // Parcours dans l'ordre : TL(0) → TR(1) → BR(3) → BL(2)
+    const order = [cornersPx[0], cornersPx[1], cornersPx[3], cornersPx[2]];
+    let total = 0, hits = 0;
+    for (let e = 0; e < 4; e++) {
+      const pA = order[e];
+      const pB = order[(e + 1) % 4];
+      const dist = Math.hypot(pB.x - pA.x, pB.y - pA.y);
+      const nSamples = Math.max(20, Math.round(dist));
+      for (let i = 0; i <= nSamples; i++) {
+        const t = i / nSamples;
+        const sx = Math.round(pA.x + t * (pB.x - pA.x));
+        const sy = Math.round(pA.y + t * (pB.y - pA.y));
+        let hit = 0;
+        for (let dy = -tolerance; dy <= tolerance && !hit; dy++) {
+          const ny = sy + dy;
+          if (ny < 0 || ny >= H) continue;
+          for (let dx = -tolerance; dx <= tolerance && !hit; dx++) {
+            const nx = sx + dx;
+            if (nx < 0 || nx >= W) continue;
+            if (redMask[ny * W + nx]) hit = 1;
+          }
+        }
+        total++;
+        if (hit) hits++;
+      }
+    }
+    return total === 0 ? 0 : hits / total;
+  }
+
   /** Détecte le CADRE ROUGE qui entoure le tableau imprimé.
    *  Retourne [TL,TR,BL,BR] en coords normalisées [0,1], ou null. */
   function detectRedFrameCorners(W, H, data, debug) {
-    // 1) Masque "rouge dominant" : R nettement > G et R > B.
-    //    Cible : rouge pur (cadre imprimé) ET magenta/rose-rouge (encre claire).
+    // 1) Masque "rouge dominant" + SATURATION élevée.
+    //    La saturation exclut les tons chair (peau, ankle) et les bruns chauds
+    //    du sol qui passaient le simple test R>G+30.
     const redMask = new Uint8Array(W * H);
     let redCount = 0;
     for (let i = 0; i < W * H; i++) {
       const j = i * 4;
       const r = data[j], g = data[j + 1], b = data[j + 2];
-      // R doit être assez clair, et clairement > G ; > B aussi (évite le bleu/cyan)
-      if (r > 95 && (r - g) > 30 && (r - b) > 5) {
+      const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
+      const sat = maxC === 0 ? 0 : (maxC - minC) / maxC;
+      // R dominant (pur rouge → magenta), saturation élevée, R != max(G,B) peau
+      if (r > 100
+          && (r - g) > 40
+          && (r - b) > 10
+          && sat > 0.40) {
         redMask[i] = 1;
         redCount++;
       }
     }
-    if (redCount < W * H * 0.0025) {
+    if (redCount < W * H * 0.002) {
       if (debug) console.log('[calib/red] mask trop fin', { redCount });
       return null;
     }
@@ -781,7 +824,7 @@ window.Calibration = (function() {
       if (debug) console.log('[calib/red] pas un cadre (rempli)', { fillRatio: fillRatio.toFixed(2) });
       return null;
     }
-    // Doit avoir au moins ~1 px de périmètre (sinon c'est un fragment isolé)
+    // Doit avoir au moins ~60 % du périmètre attendu (sinon fragment isolé)
     const expectedPerim = 2 * (bb.w + bb.h);
     if (bestSize < expectedPerim * 0.6) {
       if (debug) console.log('[calib/red] composante trop courte vs périmètre', {
@@ -792,6 +835,7 @@ window.Calibration = (function() {
 
     // 5) Coins par percentile (le cadre est fin, on peut serrer à 1%)
     const { tlPt, trPt, blPt, brPt } = cornersByPercentile(bestComp, W, 0.01);
+    const cornersPx = [tlPt, trPt, blPt, brPt];
     const corners = [
       { x: tlPt.x / W, y: tlPt.y / H },
       { x: trPt.x / W, y: trPt.y / H },
@@ -802,12 +846,28 @@ window.Calibration = (function() {
       if (debug) console.log('[calib/red] quad non convexe');
       return null;
     }
+
+    // 6) VÉRIFICATION D'INTÉGRITÉ : les 4 arêtes du quadrilatère prédit
+    //    doivent traverser des pixels rouges dans le masque ORIGINAL.
+    //    C'est ce qui rejette le cas où le haut du cadre est bien détecté
+    //    mais le bas est "tiré" vers des pixels parasites (ex. peau, sol chaud).
+    //    Si une arête passe essentiellement par du non-rouge → faux positif.
+    const coverage = edgeCoverage(cornersPx, redMask, W, H, 3);
+    if (coverage < 0.55) {
+      if (debug) console.log('[calib/red] couverture arêtes insuffisante', {
+        coverage: (coverage * 100).toFixed(0) + '%',
+        bbox: bb.w + 'x' + bb.h
+      });
+      return null;
+    }
+
     if (debug) {
       console.log('[calib/red] ✓ CADRE ROUGE détecté', {
         size: bestSize,
         bbox: bb.w + 'x' + bb.h,
         ar: ar.toFixed(2),
-        fill: (fillRatio * 100).toFixed(1) + '%'
+        fill: (fillRatio * 100).toFixed(1) + '%',
+        cov: (coverage * 100).toFixed(0) + '%'
       });
     }
     return corners;
