@@ -241,7 +241,7 @@ window.Calibration = (function() {
       }
       state = 'streaming';
       liveLockedByUser = false;
-      setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez le tableau entier, bien éclairé. Le cadre vert s\'affichera dès qu\'il est détecté.');
+      setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez le tableau entier (avec son <b>cadre rouge</b>), bien éclairé. Le quadrilatère vert s\'affichera dès qu\'il est détecté.');
       const btn = document.getElementById('calib-action-btn');
       if (btn) { btn.textContent = 'Utiliser →'; btn.disabled = true; btn.style.opacity = '0.5'; }
       showAutoBtn(true);
@@ -490,14 +490,24 @@ window.Calibration = (function() {
   }
 
   // ═══════════════════════════════════════════
-  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7 — améliorée)
+  // AUTO-DÉTECTION DES 4 COINS (Phase 3.8 — cadre rouge prioritaire)
   // ═══════════════════════════════════════════
-  // Algorithme amélioré :
-  //   1. Masque saturation + fermeture morphologique (comble les trous blancs)
-  //   2. Plus grande composante connexe (BFS, 4-connectivité)
-  //   3. Coins par percentile (robuste aux outliers) au lieu d'extrême unique
-  //   4. Validation : taille, ratio, convexité, taux de remplissage
-  //   5. Lissage temporel (EMA) pour stabiliser les coins entre frames
+  // Le tableau imprimé a un cadre rouge fin qui l'entoure : on s'en sert comme
+  // référence prioritaire car c'est un repère beaucoup plus net que la masse
+  // colorée des cases (qui peut "fuir" sur le fond ou inclure des objets).
+  //
+  // Algorithme :
+  //   PRIORITÉ A — Cadre rouge :
+  //     1. Masque "rouge dominant" (R nettement > G, R > B)
+  //     2. Fermeture morphologique légère (rebouche les coupures du contour)
+  //     3. Plus grande composante connexe rouge
+  //     4. Validation spécifique cadre : bbox, AR, fillRatio FAIBLE (creux)
+  //     5. Coins par percentile (TL/TR/BL/BR)
+  //   FALLBACK B — Saturation globale (ancien algo, si pas de cadre rouge) :
+  //     1. Masque saturation + fermeture morphologique
+  //     2. Plus grande composante connexe colorée
+  //     3. Coins par percentile + validations remplissage / convexité
+  //   6. Lissage temporel (EMA) appliqué dans tous les cas
 
   // Historique pour lissage temporel des coins détectés
   let _smoothedCorners = null;  // [TL,TR,BL,BR] lissé
@@ -550,7 +560,7 @@ window.Calibration = (function() {
     } else {
       // Pas trouvé : on garde une détection précédente si elle existe
       if (state !== 'done') {
-        setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez-le entièrement. Un cadre vert s\'affichera dès qu\'il est détecté.');
+        setCalibMsg('🔍 <b>Recherche du tableau…</b><br>Cadrez-le entièrement (le <b>cadre rouge</b> doit être visible). Un quadrilatère vert s\'affichera dès qu\'il est détecté.');
         setActionEnabled(false);
       }
     }
@@ -656,6 +666,153 @@ window.Calibration = (function() {
     return _smoothedCorners.map(p => ({ x: p.x, y: p.y }));
   }
 
+  /** Calcule TL/TR/BL/BR par percentile sur une composante connexe.
+   *  comp : tableau d'indices linéaires (y*W+x). Retourne 4 points en pixels. */
+  function cornersByPercentile(comp, W, percentile) {
+    const scores = new Array(comp.length);
+    for (let k = 0; k < comp.length; k++) {
+      const p = comp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      scores[k] = { x, y, xPy: x + y, xMy: x - y };
+    }
+    scores.sort((a, b) => a.xPy - b.xPy);
+    const idxLow = Math.floor(scores.length * percentile);
+    const idxHigh = Math.floor(scores.length * (1 - percentile));
+    const tlPt = scores[Math.max(0, idxLow)];
+    const brPt = scores[Math.min(scores.length - 1, idxHigh)];
+    scores.sort((a, b) => a.xMy - b.xMy);
+    const blPt = scores[Math.max(0, idxLow)];
+    const trPt = scores[Math.min(scores.length - 1, idxHigh)];
+    return { tlPt, trPt, blPt, brPt };
+  }
+
+  /** Bbox d'une composante connexe (en pixels). */
+  function compBbox(comp, W) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let k = 0; k < comp.length; k++) {
+      const p = comp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return { minX, maxX, minY, maxY, w: maxX - minX + 1, h: maxY - minY + 1 };
+  }
+
+  /** Plus grande composante connexe (BFS itératif, 4-connectivité)
+   *  d'un masque binaire Uint8Array de taille W×H. Retourne {comp, size}. */
+  function largestComponent(mask, W, H) {
+    const visited = new Uint8Array(W * H);
+    const stack = new Int32Array(W * H);
+    let bestComp = null;
+    let bestSize = 0;
+    for (let start = 0; start < W * H; start++) {
+      if (!mask[start] || visited[start]) continue;
+      let top = 0;
+      stack[top++] = start;
+      visited[start] = 1;
+      const comp = [];
+      while (top > 0) {
+        const p = stack[--top];
+        comp.push(p);
+        const x = p % W;
+        const y = (p - x) / W;
+        if (x > 0)     { const q = p - 1; if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; } }
+        if (x < W - 1) { const q = p + 1; if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; } }
+        if (y > 0)     { const q = p - W; if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; } }
+        if (y < H - 1) { const q = p + W; if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; } }
+      }
+      if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
+    }
+    return { comp: bestComp, size: bestSize };
+  }
+
+  /** Détecte le CADRE ROUGE qui entoure le tableau imprimé.
+   *  Retourne [TL,TR,BL,BR] en coords normalisées [0,1], ou null. */
+  function detectRedFrameCorners(W, H, data, debug) {
+    // 1) Masque "rouge dominant" : R nettement > G et R > B.
+    //    Cible : rouge pur (cadre imprimé) ET magenta/rose-rouge (encre claire).
+    const redMask = new Uint8Array(W * H);
+    let redCount = 0;
+    for (let i = 0; i < W * H; i++) {
+      const j = i * 4;
+      const r = data[j], g = data[j + 1], b = data[j + 2];
+      // R doit être assez clair, et clairement > G ; > B aussi (évite le bleu/cyan)
+      if (r > 95 && (r - g) > 30 && (r - b) > 5) {
+        redMask[i] = 1;
+        redCount++;
+      }
+    }
+    if (redCount < W * H * 0.0025) {
+      if (debug) console.log('[calib/red] mask trop fin', { redCount });
+      return null;
+    }
+
+    // 2) Fermeture morphologique légère (r=2) : reconnecte les coupures du
+    //    cadre dues au flou / bruit, sans coller des éléments rouges étrangers.
+    const mask = morphClose(redMask, W, H, 2);
+
+    // 3) Plus grande composante connexe rouge
+    const { comp: bestComp, size: bestSize } = largestComponent(mask, W, H);
+    if (!bestComp || bestSize < W * H * 0.002) {
+      if (debug) console.log('[calib/red] composante trop petite', { bestSize });
+      return null;
+    }
+
+    // 4) Bbox + sanity checks (taille, ratio, "creusité" du cadre)
+    const bb = compBbox(bestComp, W);
+    if (bb.w < W * 0.20 || bb.h < H * 0.20) {
+      if (debug) console.log('[calib/red] bbox trop petite', { w: bb.w, h: bb.h });
+      return null;
+    }
+    const ar = bb.w / bb.h;
+    if (ar < 0.6 || ar > 5.0) {
+      if (debug) console.log('[calib/red] AR hors plage', { ar: ar.toFixed(2) });
+      return null;
+    }
+    // Un VRAI cadre est creux : la composante remplit peu sa bbox (typiquement
+    // <25% pour un trait fin). Au-dessus, c'est probablement une zone rouge
+    // pleine (objet rouge dans la scène) → on rejette.
+    const fillRatio = bestSize / (bb.w * bb.h);
+    if (fillRatio > 0.30) {
+      if (debug) console.log('[calib/red] pas un cadre (rempli)', { fillRatio: fillRatio.toFixed(2) });
+      return null;
+    }
+    // Doit avoir au moins ~1 px de périmètre (sinon c'est un fragment isolé)
+    const expectedPerim = 2 * (bb.w + bb.h);
+    if (bestSize < expectedPerim * 0.6) {
+      if (debug) console.log('[calib/red] composante trop courte vs périmètre', {
+        bestSize, expectedPerim
+      });
+      return null;
+    }
+
+    // 5) Coins par percentile (le cadre est fin, on peut serrer à 1%)
+    const { tlPt, trPt, blPt, brPt } = cornersByPercentile(bestComp, W, 0.01);
+    const corners = [
+      { x: tlPt.x / W, y: tlPt.y / H },
+      { x: trPt.x / W, y: trPt.y / H },
+      { x: blPt.x / W, y: blPt.y / H },
+      { x: brPt.x / W, y: brPt.y / H }
+    ];
+    if (!isConvexQuad(corners)) {
+      if (debug) console.log('[calib/red] quad non convexe');
+      return null;
+    }
+    if (debug) {
+      console.log('[calib/red] ✓ CADRE ROUGE détecté', {
+        size: bestSize,
+        bbox: bb.w + 'x' + bb.h,
+        ar: ar.toFixed(2),
+        fill: (fillRatio * 100).toFixed(1) + '%'
+      });
+    }
+    return corners;
+  }
+
   /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
    *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
    *  ou null si la détection échoue. */
@@ -676,6 +833,15 @@ window.Calibration = (function() {
     try { data = ctx.getImageData(0, 0, W, H).data; }
     catch (e) { console.warn('[calib] getImageData failed', e); return null; }
 
+    const debug = (++_detectCounter % 10 === 0);
+
+    // ─── PRIORITÉ A : cadre rouge ─────────────────────────────────────────
+    const redCorners = detectRedFrameCorners(W, H, data, debug);
+    if (redCorners) {
+      return smoothCorners(redCorners);
+    }
+
+    // ─── FALLBACK B : saturation globale (ancien algorithme) ──────────────
     // 1) Masque de saturation : pixels colorés = probablement tableau.
     const rawMask = new Uint8Array(W * H);
     let rawMaskCount = 0;
@@ -692,7 +858,6 @@ window.Calibration = (function() {
       }
     }
 
-    const debug = (++_detectCounter % 10 === 0);
     if (rawMaskCount < W * H * 0.012) {
       if (debug) console.log('[calib] no colorful pixels', { rawMaskCount, pct: (rawMaskCount / (W * H) * 100).toFixed(1) + '%' });
       return null;
@@ -701,99 +866,31 @@ window.Calibration = (function() {
     // 2) Fermeture morphologique : comble les trous entre cellules colorées
     //    (cellules blanches, bordures, reflets). Rayon = 3px sur 320px ≈ 1%.
     const mask = morphClose(rawMask, W, H, 3);
-    let maskCount = 0;
-    for (let i = 0; i < W * H; i++) if (mask[i]) maskCount++;
 
     // 3) Plus grande composante connexe (BFS itératif, 4-connectivité)
-    const visited = new Uint8Array(W * H);
-    const stack = new Int32Array(W * H);
-    let bestComp = null;
-    let bestSize = 0;
-    for (let start = 0; start < W * H; start++) {
-      if (!mask[start] || visited[start]) continue;
-      let top = 0;
-      stack[top++] = start;
-      visited[start] = 1;
-      const comp = [];
-      while (top > 0) {
-        const p = stack[--top];
-        comp.push(p);
-        const x = p % W;
-        const y = (p - x) / W;
-        if (x > 0) {
-          const q = p - 1;
-          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
-        }
-        if (x < W - 1) {
-          const q = p + 1;
-          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
-        }
-        if (y > 0) {
-          const q = p - W;
-          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
-        }
-        if (y < H - 1) {
-          const q = p + W;
-          if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
-        }
-      }
-      if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
-    }
-
+    const { comp: bestComp, size: bestSize } = largestComponent(mask, W, H);
     if (!bestComp || bestSize < W * H * 0.008) {
       if (debug) console.log('[calib] component too small', { bestSize, pct: (bestSize / (W * H) * 100).toFixed(1) + '%' });
       return null;
     }
 
-    // 4) Coins par percentile : trie les scores (x+y) et (x-y) puis prend
-    //    le 2e percentile au lieu de l'extrême pur → robuste aux outliers.
-    const PERCENTILE = 0.02; // 2%
-    const scores = new Array(bestComp.length);
-    for (let k = 0; k < bestComp.length; k++) {
-      const p = bestComp[k];
-      const x = p % W;
-      const y = (p - x) / W;
-      scores[k] = { x, y, xPy: x + y, xMy: x - y };
-    }
-
-    // Trier par x+y pour TL (min) et BR (max)
-    scores.sort((a, b) => a.xPy - b.xPy);
-    const idxLow = Math.floor(scores.length * PERCENTILE);
-    const idxHigh = Math.floor(scores.length * (1 - PERCENTILE));
-    const tlPt = scores[Math.max(0, idxLow)];
-    const brPt = scores[Math.min(scores.length - 1, idxHigh)];
-
-    // Trier par x-y pour TR (max) et BL (min)
-    scores.sort((a, b) => a.xMy - b.xMy);
-    const blPt = scores[Math.max(0, idxLow)];
-    const trPt = scores[Math.min(scores.length - 1, idxHigh)];
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let k = 0; k < bestComp.length; k++) {
-      const p = bestComp[k];
-      const x = p % W;
-      const y = (p - x) / W;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
+    // 4) Coins par percentile (2% au lieu de l'extrême pur → robuste aux outliers).
+    const { tlPt, trPt, blPt, brPt } = cornersByPercentile(bestComp, W, 0.02);
 
     // 5) Sanity checks
-    const bboxW = maxX - minX + 1;
-    const bboxH = maxY - minY + 1;
-    if (bboxW < W * 0.12 || bboxH < H * 0.12) {
-      if (debug) console.log('[calib] bbox too small', { bboxW, bboxH });
+    const bb = compBbox(bestComp, W);
+    if (bb.w < W * 0.12 || bb.h < H * 0.12) {
+      if (debug) console.log('[calib] bbox too small', { bboxW: bb.w, bboxH: bb.h });
       return null;
     }
-    const ar = bboxW / bboxH;
+    const ar = bb.w / bb.h;
     if (ar < 0.25 || ar > 4.5) {
       if (debug) console.log('[calib] aspect ratio off', { ar: ar.toFixed(2) });
       return null;
     }
 
     // Taux de remplissage : la composante doit remplir au moins 35% de sa bbox
-    const fillRatio = bestSize / (bboxW * bboxH);
+    const fillRatio = bestSize / (bb.w * bb.h);
     if (fillRatio < 0.35) {
       if (debug) console.log('[calib] fill ratio too low', { fillRatio: fillRatio.toFixed(2) });
       return null;
@@ -813,9 +910,9 @@ window.Calibration = (function() {
     }
 
     if (debug) {
-      console.log('[calib] ✓ detected', {
+      console.log('[calib] ✓ detected (saturation)', {
         size: (bestSize / (W * H) * 100).toFixed(1) + '%',
-        bbox: bboxW + 'x' + bboxH,
+        bbox: bb.w + 'x' + bb.h,
         ar: ar.toFixed(2),
         fill: (fillRatio * 100).toFixed(0) + '%'
       });
