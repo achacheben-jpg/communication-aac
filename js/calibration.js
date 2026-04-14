@@ -213,6 +213,9 @@ window.Calibration = (function() {
   function showAutoBtn(visible) {
     const b = document.getElementById('calib-auto-btn');
     if (b) b.style.display = visible ? '' : 'none';
+    // Le bouton "✋ Pointer" (manuel) apparaît en même temps que "⚡ Auto"
+    const m = document.getElementById('calib-manual-btn');
+    if (m) m.style.display = visible ? '' : 'none';
   }
 
   async function startCam() {
@@ -566,6 +569,32 @@ window.Calibration = (function() {
     }
   }
 
+  /** Bouton "✋ Pointer" : reprend le contrôle manuel, efface la détection
+   *  auto en cours, et demande à l'utilisateur de toucher les 4 coins.
+   *  Nécessaire quand la détection auto place des coins imprécis ou erronés. */
+  function startManualTap() {
+    liveLockedByUser = true;
+    stopLive();
+    points = [];
+    step = 0;
+    state = 'tapping';
+    for (let i = 0; i < 4; i++) {
+      const d = document.getElementById('dot-' + i);
+      if (d) d.className = 'step-dot';
+    }
+    const d0 = document.getElementById('dot-0');
+    if (d0) d0.className = 'step-dot current';
+    const canvas = document.getElementById('canvas-calib');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    setCalibMsg(`👆 Touchez <b>${CORNERS[0]}</b> du tableau.`);
+    setActionEnabled(false);
+    const btn = document.getElementById('calib-action-btn');
+    if (btn) btn.textContent = 'Utiliser →';
+  }
+
   /** Bouton "⚡ Auto" : force une nouvelle analyse immédiate (one-shot) */
   function auto() {
     liveLockedByUser = false;
@@ -730,6 +759,137 @@ window.Calibration = (function() {
     return { comp: bestComp, size: bestSize };
   }
 
+  /** Ajuste une droite y = a*x + b par moindres carrés sur un ensemble de
+   *  points. `trimIter` itérations d'élagage des outliers (> 2σ). */
+  function fitLineYofX(pts, trimIter) {
+    trimIter = trimIter || 0;
+    let fitPts = pts;
+    let line = null;
+    for (let iter = 0; iter <= trimIter; iter++) {
+      const n = fitPts.length;
+      if (n < 2) return line;
+      let sx = 0, sy = 0, sxy = 0, sx2 = 0;
+      for (let i = 0; i < n; i++) {
+        const p = fitPts[i];
+        sx += p.x; sy += p.y; sxy += p.x * p.y; sx2 += p.x * p.x;
+      }
+      const denom = n * sx2 - sx * sx;
+      const a = Math.abs(denom) < 1e-6 ? 0 : (n * sxy - sx * sy) / denom;
+      const b = Math.abs(denom) < 1e-6 ? sy / n : (sy - a * sx) / n;
+      line = { a, b };
+      if (iter < trimIter) {
+        let sumR2 = 0;
+        for (let i = 0; i < n; i++) {
+          const r = fitPts[i].y - (a * fitPts[i].x + b);
+          sumR2 += r * r;
+        }
+        const sigma = Math.sqrt(sumR2 / n);
+        const thr = 2 * sigma + 0.5;
+        const kept = [];
+        for (let i = 0; i < n; i++) {
+          if (Math.abs(fitPts[i].y - (a * fitPts[i].x + b)) < thr) kept.push(fitPts[i]);
+        }
+        if (kept.length < 2) break;
+        fitPts = kept;
+      }
+    }
+    return line;
+  }
+
+  /** Ajuste une droite x = a*y + b par moindres carrés (pour bords verticaux). */
+  function fitLineXofY(pts, trimIter) {
+    trimIter = trimIter || 0;
+    let fitPts = pts;
+    let line = null;
+    for (let iter = 0; iter <= trimIter; iter++) {
+      const n = fitPts.length;
+      if (n < 2) return line;
+      let sx = 0, sy = 0, sxy = 0, sy2 = 0;
+      for (let i = 0; i < n; i++) {
+        const p = fitPts[i];
+        sx += p.x; sy += p.y; sxy += p.x * p.y; sy2 += p.y * p.y;
+      }
+      const denom = n * sy2 - sy * sy;
+      const a = Math.abs(denom) < 1e-6 ? 0 : (n * sxy - sx * sy) / denom;
+      const b = Math.abs(denom) < 1e-6 ? sx / n : (sx - a * sy) / n;
+      line = { a, b };
+      if (iter < trimIter) {
+        let sumR2 = 0;
+        for (let i = 0; i < n; i++) {
+          const r = fitPts[i].x - (a * fitPts[i].y + b);
+          sumR2 += r * r;
+        }
+        const sigma = Math.sqrt(sumR2 / n);
+        const thr = 2 * sigma + 0.5;
+        const kept = [];
+        for (let i = 0; i < n; i++) {
+          if (Math.abs(fitPts[i].x - (a * fitPts[i].y + b)) < thr) kept.push(fitPts[i]);
+        }
+        if (kept.length < 2) break;
+        fitPts = kept;
+      }
+    }
+    return line;
+  }
+
+  /** Intersection d'une droite "horizontale-ish" (y = a*x + b) et
+   *  "verticale-ish" (x = c*y + d). Retourne null si parallèles. */
+  function intersectHV(h, v) {
+    const denom = 1 - h.a * v.a;
+    if (Math.abs(denom) < 1e-6) return null;
+    const y = (h.a * v.b + h.b) / denom;
+    const x = v.a * y + v.b;
+    return { x, y };
+  }
+
+  /** Ajuste 4 droites sur les bords d'une composante (bandes haut/bas/gauche/
+   *  droite de la bbox, chacune = 25 % de la dimension correspondante) puis
+   *  calcule les 4 intersections (= vrais coins géométriques du cadre).
+   *  Beaucoup plus précis que la méthode percentile pour un cadre net.
+   *  Retourne {tlPt,trPt,blPt,brPt} en pixels, ou null si fit impossible. */
+  function fitFrameCorners(comp, W, bb) {
+    const bandH = Math.max(4, Math.round(bb.h * 0.25));
+    const bandW = Math.max(4, Math.round(bb.w * 0.25));
+    const topMax = bb.minY + bandH;
+    const botMin = bb.maxY - bandH;
+    const leftMax = bb.minX + bandW;
+    const rightMin = bb.maxX - bandW;
+
+    const topPts = [], botPts = [], leftPts = [], rightPts = [];
+    for (let k = 0; k < comp.length; k++) {
+      const p = comp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      if (y <= topMax) topPts.push({ x, y });
+      if (y >= botMin) botPts.push({ x, y });
+      if (x <= leftMax) leftPts.push({ x, y });
+      if (x >= rightMin) rightPts.push({ x, y });
+    }
+    if (topPts.length < 8 || botPts.length < 8 ||
+        leftPts.length < 8 || rightPts.length < 8) return null;
+
+    const topL = fitLineYofX(topPts, 2);
+    const botL = fitLineYofX(botPts, 2);
+    const leftL = fitLineXofY(leftPts, 2);
+    const rightL = fitLineXofY(rightPts, 2);
+    if (!topL || !botL || !leftL || !rightL) return null;
+
+    const tl = intersectHV(topL, leftL);
+    const tr = intersectHV(topL, rightL);
+    const bl = intersectHV(botL, leftL);
+    const br = intersectHV(botL, rightL);
+    if (!tl || !tr || !bl || !br) return null;
+
+    // Sanity : les intersections doivent rester proches de la bbox
+    const margin = Math.max(bb.w, bb.h) * 0.15;
+    const within = (pt) =>
+      pt.x >= bb.minX - margin && pt.x <= bb.maxX + margin &&
+      pt.y >= bb.minY - margin && pt.y <= bb.maxY + margin;
+    if (!within(tl) || !within(tr) || !within(bl) || !within(br)) return null;
+
+    return { tlPt: tl, trPt: tr, blPt: bl, brPt: br };
+  }
+
   /** Couverture des 4 arêtes d'un quadrilatère par des pixels rouges.
    *  Échantillonne le long de chaque arête (TL→TR→BR→BL→TL) et vérifie
    *  qu'un pixel rouge est présent dans un rayon de `tolerance` pixels.
@@ -833,29 +993,45 @@ window.Calibration = (function() {
       return null;
     }
 
-    // 5) Coins par percentile (le cadre est fin, on peut serrer à 1%)
-    const { tlPt, trPt, blPt, brPt } = cornersByPercentile(bestComp, W, 0.01);
-    const cornersPx = [tlPt, trPt, blPt, brPt];
-    const corners = [
-      { x: tlPt.x / W, y: tlPt.y / H },
-      { x: trPt.x / W, y: trPt.y / H },
-      { x: blPt.x / W, y: blPt.y / H },
-      { x: brPt.x / W, y: brPt.y / H }
-    ];
-    if (!isConvexQuad(corners)) {
-      if (debug) console.log('[calib/red] quad non convexe');
+    // 5) Deux candidats de coins : (a) ajustement de 4 droites aux bords,
+    //    (b) percentile. On calcule la couverture des arêtes pour chacun
+    //    et on garde le meilleur. L'ajustement de droites est généralement
+    //    plus précis (coins = intersections géométriques réelles) mais peut
+    //    dériver si les bords sont trop bruités ; le percentile sert alors
+    //    de filet de sécurité.
+    const candidates = [];
+    const pushCandidate = (corners4, label) => {
+      const cornersPx = [corners4.tlPt, corners4.trPt, corners4.blPt, corners4.brPt];
+      const cornersN = [
+        { x: cornersPx[0].x / W, y: cornersPx[0].y / H },
+        { x: cornersPx[1].x / W, y: cornersPx[1].y / H },
+        { x: cornersPx[2].x / W, y: cornersPx[2].y / H },
+        { x: cornersPx[3].x / W, y: cornersPx[3].y / H }
+      ];
+      if (!isConvexQuad(cornersN)) return;
+      const cov = edgeCoverage(cornersPx, redMask, W, H, 3);
+      candidates.push({ corners: cornersN, cov, label });
+    };
+
+    const lineFit = fitFrameCorners(bestComp, W, bb);
+    if (lineFit) pushCandidate(lineFit, 'lineFit');
+    pushCandidate(cornersByPercentile(bestComp, W, 0.01), 'percentile');
+
+    if (candidates.length === 0) {
+      if (debug) console.log('[calib/red] aucun candidat convexe');
       return null;
     }
+    candidates.sort((a, b) => b.cov - a.cov);
+    const best = candidates[0];
 
     // 6) VÉRIFICATION D'INTÉGRITÉ : les 4 arêtes du quadrilatère prédit
     //    doivent traverser des pixels rouges dans le masque ORIGINAL.
     //    C'est ce qui rejette le cas où le haut du cadre est bien détecté
     //    mais le bas est "tiré" vers des pixels parasites (ex. peau, sol chaud).
-    //    Si une arête passe essentiellement par du non-rouge → faux positif.
-    const coverage = edgeCoverage(cornersPx, redMask, W, H, 3);
-    if (coverage < 0.55) {
+    if (best.cov < 0.55) {
       if (debug) console.log('[calib/red] couverture arêtes insuffisante', {
-        coverage: (coverage * 100).toFixed(0) + '%',
+        cov: (best.cov * 100).toFixed(0) + '%',
+        label: best.label,
         bbox: bb.w + 'x' + bb.h
       });
       return null;
@@ -863,14 +1039,15 @@ window.Calibration = (function() {
 
     if (debug) {
       console.log('[calib/red] ✓ CADRE ROUGE détecté', {
+        method: best.label,
         size: bestSize,
         bbox: bb.w + 'x' + bb.h,
         ar: ar.toFixed(2),
         fill: (fillRatio * 100).toFixed(1) + '%',
-        cov: (coverage * 100).toFixed(0) + '%'
+        cov: (best.cov * 100).toFixed(0) + '%'
       });
     }
-    return corners;
+    return best.corners;
   }
 
   /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
@@ -1110,7 +1287,7 @@ window.Calibration = (function() {
   }
 
   return {
-    load, getPoints, reset, startCam, action, auto, stopCam, save, isCalibrated,
+    load, getPoints, reset, startCam, action, auto, startManualTap, stopCam, save, isCalibrated,
     recordPair, getLearnedOffset, resetOffsetLearning, initLabel,
     cssToVideoNorm, videoNormToCss,
     listProfiles, getActiveProfileName, saveProfile, loadProfile, deleteProfile,
