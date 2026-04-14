@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v13 · cadre rouge strict</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v14 · fit 4 droites + pointer manuel</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -65,6 +65,7 @@
   <div class="calib-actions">
     <button class="btn-secondary" onclick="App.showScreen('home')">← Retour</button>
     <button class="btn-secondary" id="calib-auto-btn" onclick="Calibration.auto()" style="display:none">⚡ Auto</button>
+    <button class="btn-secondary" id="calib-manual-btn" onclick="Calibration.startManualTap()" style="display:none">✋ Pointer</button>
     <button class="btn-primary" id="calib-action-btn" onclick="Calibration.action()">Démarrer caméra</button>
   </div>
 </div>
