@@ -490,14 +490,16 @@ window.Calibration = (function() {
   }
 
   // ═══════════════════════════════════════════
-  // AUTO-DÉTECTION DES 4 COINS (Phase 3.7 — améliorée)
+  // AUTO-DÉTECTION DES 4 COINS (Phase 3.8 — hull + multi-candidats)
   // ═══════════════════════════════════════════
   // Algorithme amélioré :
-  //   1. Masque saturation + fermeture morphologique (comble les trous blancs)
-  //   2. Plus grande composante connexe (BFS, 4-connectivité)
-  //   3. Coins par percentile (robuste aux outliers) au lieu d'extrême unique
-  //   4. Validation : taille, ratio, convexité, taux de remplissage
-  //   5. Lissage temporel (EMA) pour stabiliser les coins entre frames
+  //   1. Masque saturation + ouverture (enlève bruit) + fermeture morphologique
+  //   2. Extraction de TOUTES les composantes (pas seulement la plus grande)
+  //   3. Pour chaque candidate : convex hull + quadrilatère inscrit de max aire
+  //   4. Score de forme (rectangularité × fill × taille × AR raisonnable)
+  //   5. Sélection du meilleur candidat selon son score global
+  //   6. Validation finale : convexité, remplissage du quad, rectangularité
+  //   7. Lissage temporel (EMA) pour stabiliser les coins entre frames
 
   // Historique pour lissage temporel des coins détectés
   let _smoothedCorners = null;  // [TL,TR,BL,BR] lissé
@@ -568,13 +570,9 @@ window.Calibration = (function() {
   // Compteur pour debug (affiche dans la console toutes les N frames)
   let _detectCounter = 0;
 
-  /** Fermeture morphologique sur un masque binaire (Uint8Array) de taille W×H.
-   *  Dilate puis érode avec un noyau carré de rayon `r` pixels.
-   *  Comble les trous (cellules blanches entre cellules colorées). */
-  function morphClose(mask, W, H, r) {
-    const N = W * H;
-    const tmp = new Uint8Array(N);
-    // Dilatation : si au moins un voisin dans le carré (2r+1)×(2r+1) est à 1 → 1
+  /** Dilatation : tout pixel dont au moins un voisin dans le carré (2r+1)² est à 1 → 1 */
+  function morphDilate(mask, W, H, r) {
+    const out = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         let found = 0;
@@ -587,11 +585,15 @@ window.Calibration = (function() {
             if (mask[ny * W + nx]) found = 1;
           }
         }
-        tmp[y * W + x] = found;
+        out[y * W + x] = found;
       }
     }
-    // Érosion : si tous les voisins dans le carré (2r+1)×(2r+1) sont à 1 → 1
-    const out = new Uint8Array(N);
+    return out;
+  }
+
+  /** Érosion : tout pixel dont tous les voisins dans le carré (2r+1)² sont à 1 → 1 */
+  function morphErode(mask, W, H, r) {
+    const out = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         let allOk = 1;
@@ -601,13 +603,133 @@ window.Calibration = (function() {
           for (let dx = -r; dx <= r && allOk; dx++) {
             const nx = x + dx;
             if (nx < 0 || nx >= W) { allOk = 0; break; }
-            if (!tmp[ny * W + nx]) allOk = 0;
+            if (!mask[ny * W + nx]) allOk = 0;
           }
         }
         out[y * W + x] = allOk;
       }
     }
     return out;
+  }
+
+  /** Fermeture morphologique : dilatation puis érosion. Comble les trous. */
+  function morphClose(mask, W, H, r) {
+    return morphErode(morphDilate(mask, W, H, r), W, H, r);
+  }
+
+  /** Ouverture morphologique : érosion puis dilatation. Supprime les petits bruits. */
+  function morphOpen(mask, W, H, r) {
+    return morphDilate(morphErode(mask, W, H, r), W, H, r);
+  }
+
+  /** Produit vectoriel 2D : (A-O) × (B-O). > 0 : CCW, < 0 : CW, = 0 : colinéaire. */
+  function crossProd(O, A, B) {
+    return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+  }
+
+  /** Convex hull par algorithme d'Andrew (monotone chain). O(n log n).
+   *  Retourne les sommets dans l'ordre CCW (y pointant vers le bas → visuellement CW). */
+  function convexHull(pts) {
+    if (pts.length < 3) return pts.slice();
+    const sorted = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    const lower = [];
+    for (const p of sorted) {
+      while (lower.length >= 2 && crossProd(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+        lower.pop();
+      }
+      lower.push(p);
+    }
+    const upper = [];
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const p = sorted[i];
+      while (upper.length >= 2 && crossProd(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+        upper.pop();
+      }
+      upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+  }
+
+  /** Aire d'un triangle (valeur absolue). */
+  function triArea(A, B, C) {
+    return Math.abs((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x)) * 0.5;
+  }
+
+  /** Aire d'un quadrilatère convexe [p0, p1, p2, p3] (dans l'ordre du parcours). */
+  function quadAreaOrdered(p0, p1, p2, p3) {
+    return triArea(p0, p1, p2) + triArea(p0, p2, p3);
+  }
+
+  /** Trouve le quadrilatère inscrit de surface maximale sur le convex hull.
+   *  Approche : pour chaque diagonale (i,k), chercher le meilleur j (côté 1)
+   *  et le meilleur l (côté 2). Exploite la monotonie via rotation en O(n²).
+   *  Retourne les 4 points dans l'ordre du hull (CCW). */
+  function maxAreaInscribedQuad(hull) {
+    const n = hull.length;
+    if (n < 4) return null;
+    if (n === 4) return hull.slice();
+
+    let bestArea = -Infinity;
+    let best = null;
+
+    // Pour chaque paire (i, k) diagonale, chercher j entre i+1..k-1 et l entre k+1..i-1
+    for (let i = 0; i < n; i++) {
+      let j = (i + 1) % n;
+      for (let kk = 2; kk <= n - 2; kk++) {
+        const k = (i + kk) % n;
+        // Avancer j tant que l'aire du triangle (i,j,k) augmente
+        let jNext = (j + 1) % n;
+        while (jNext !== k &&
+               triArea(hull[i], hull[jNext], hull[k]) >= triArea(hull[i], hull[j], hull[k])) {
+          j = jNext;
+          jNext = (j + 1) % n;
+        }
+        // Chercher le meilleur l de l'autre côté (k+1..i-1) — linéaire mais borné
+        let bestL = -1;
+        let bestLArea = -1;
+        for (let ll = 1; ll < n - kk; ll++) {
+          const l = (k + ll) % n;
+          if (l === i) break;
+          const a = triArea(hull[k], hull[l], hull[i]);
+          if (a > bestLArea) { bestLArea = a; bestL = l; }
+        }
+        if (j !== i && j !== k && bestL !== -1 && bestL !== i && bestL !== k) {
+          const area = triArea(hull[i], hull[j], hull[k]) + bestLArea;
+          if (area > bestArea) {
+            bestArea = area;
+            best = [hull[i], hull[j], hull[k], hull[bestL]];
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Ordonne 4 coins dans l'ordre [TL, TR, BL, BR] selon leur position
+   *  relative au centroïde. Retourne null si une position est dégénérée. */
+  function orderCornersTLTRBLBR(quad) {
+    if (!quad || quad.length !== 4) return null;
+    const cx = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+    const cy = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+    let tl = null, tr = null, bl = null, br = null;
+    for (const p of quad) {
+      if (p.x <= cx && p.y <= cy)      tl = tl === null ? p : (p.x + p.y < tl.x + tl.y ? p : tl);
+      else if (p.x > cx && p.y <= cy)  tr = tr === null ? p : (p.y - p.x < tr.y - tr.x ? p : tr);
+      else if (p.x <= cx && p.y > cy)  bl = bl === null ? p : (p.x - p.y < bl.x - bl.y ? p : bl);
+      else                              br = br === null ? p : (p.x + p.y > br.x + br.y ? p : br);
+    }
+    // Fallback : si un quadrant manque, utiliser un tri par score diagonal
+    if (!tl || !tr || !bl || !br) {
+      const byTL  = quad.slice().sort((a, b) => (a.x + a.y) - (b.x + b.y))[0];
+      const byBR  = quad.slice().sort((a, b) => (b.x + b.y) - (a.x + a.y))[0];
+      const byTR  = quad.slice().sort((a, b) => (b.x - b.y) - (a.x - a.y))[0];
+      const byBL  = quad.slice().sort((a, b) => (a.x - a.y) - (b.x - b.y))[0];
+      if (byTL === byTR || byTL === byBL || byBR === byTR || byBR === byBL) return null;
+      return [byTL, byTR, byBL, byBR];
+    }
+    return [tl, tr, bl, br];
   }
 
   /** Vérifie que 4 coins forment un quadrilatère convexe.
@@ -656,59 +778,29 @@ window.Calibration = (function() {
     return _smoothedCorners.map(p => ({ x: p.x, y: p.y }));
   }
 
-  /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
-   *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
-   *  ou null si la détection échoue. */
-  function detectBoardCorners(video) {
-    const vw = video.videoWidth || 640;
-    const vh = video.videoHeight || 360;
-    const W = 320;
-    const H = Math.max(120, Math.round(W * vh / vw));
-
-    const cvs = document.createElement('canvas');
-    cvs.width = W;
-    cvs.height = H;
-    const ctx = cvs.getContext('2d', { willReadFrequently: true });
-    try {
-      ctx.drawImage(video, 0, 0, W, H);
-    } catch (e) { console.warn('[calib] drawImage failed', e); return null; }
-    let data;
-    try { data = ctx.getImageData(0, 0, W, H).data; }
-    catch (e) { console.warn('[calib] getImageData failed', e); return null; }
-
-    // 1) Masque de saturation : pixels colorés = probablement tableau.
-    const rawMask = new Uint8Array(W * H);
-    let rawMaskCount = 0;
-    for (let i = 0; i < W * H; i++) {
-      const j = i * 4;
-      const r = data[j], g = data[j + 1], b = data[j + 2];
-      const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
-      if (maxC < 35) continue; // trop sombre (seuil légèrement abaissé)
-      const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
-      const sat = (maxC - minC) / maxC;
-      if (sat > 0.18) {  // seuil abaissé pour mieux capter les couleurs pâles
-        rawMask[i] = 1;
-        rawMaskCount++;
-      }
+  /** Extrait les pixels de la frontière (boundary) d'une composante.
+   *  Un pixel appartient à la frontière si au moins un de ses 4-voisins n'est pas dans mask. */
+  function extractBoundary(comp, W, H, mask) {
+    const pts = [];
+    for (let k = 0; k < comp.length; k++) {
+      const p = comp[k];
+      const x = p % W;
+      const y = (p - x) / W;
+      const left  = x > 0       ? mask[p - 1] : 0;
+      const right = x < W - 1   ? mask[p + 1] : 0;
+      const up    = y > 0       ? mask[p - W] : 0;
+      const down  = y < H - 1   ? mask[p + W] : 0;
+      if (!left || !right || !up || !down) pts.push({ x, y });
     }
+    return pts;
+  }
 
-    const debug = (++_detectCounter % 10 === 0);
-    if (rawMaskCount < W * H * 0.012) {
-      if (debug) console.log('[calib] no colorful pixels', { rawMaskCount, pct: (rawMaskCount / (W * H) * 100).toFixed(1) + '%' });
-      return null;
-    }
-
-    // 2) Fermeture morphologique : comble les trous entre cellules colorées
-    //    (cellules blanches, bordures, reflets). Rayon = 3px sur 320px ≈ 1%.
-    const mask = morphClose(rawMask, W, H, 3);
-    let maskCount = 0;
-    for (let i = 0; i < W * H; i++) if (mask[i]) maskCount++;
-
-    // 3) Plus grande composante connexe (BFS itératif, 4-connectivité)
+  /** BFS/DFS pour extraire toutes les composantes connexes de mask.
+   *  Retourne un tableau de composantes (chaque comp = tableau d'indices). */
+  function extractComponents(mask, W, H) {
+    const comps = [];
     const visited = new Uint8Array(W * H);
     const stack = new Int32Array(W * H);
-    let bestComp = null;
-    let bestSize = 0;
     for (let start = 0; start < W * H; start++) {
       if (!mask[start] || visited[start]) continue;
       let top = 0;
@@ -737,40 +829,20 @@ window.Calibration = (function() {
           if (mask[q] && !visited[q]) { visited[q] = 1; stack[top++] = q; }
         }
       }
-      if (comp.length > bestSize) { bestSize = comp.length; bestComp = comp; }
+      comps.push(comp);
     }
+    return comps;
+  }
 
-    if (!bestComp || bestSize < W * H * 0.008) {
-      if (debug) console.log('[calib] component too small', { bestSize, pct: (bestSize / (W * H) * 100).toFixed(1) + '%' });
-      return null;
-    }
+  /** Évalue une composante et retourne { score, quadNorm, metrics } ou null si invalide.
+   *  quadNorm : [TL,TR,BL,BR] en coords normalisées pixel (0..W, 0..H) du canvas de travail. */
+  function evalComponent(comp, W, H, mask, debug) {
+    const size = comp.length;
 
-    // 4) Coins par percentile : trie les scores (x+y) et (x-y) puis prend
-    //    le 2e percentile au lieu de l'extrême pur → robuste aux outliers.
-    const PERCENTILE = 0.02; // 2%
-    const scores = new Array(bestComp.length);
-    for (let k = 0; k < bestComp.length; k++) {
-      const p = bestComp[k];
-      const x = p % W;
-      const y = (p - x) / W;
-      scores[k] = { x, y, xPy: x + y, xMy: x - y };
-    }
-
-    // Trier par x+y pour TL (min) et BR (max)
-    scores.sort((a, b) => a.xPy - b.xPy);
-    const idxLow = Math.floor(scores.length * PERCENTILE);
-    const idxHigh = Math.floor(scores.length * (1 - PERCENTILE));
-    const tlPt = scores[Math.max(0, idxLow)];
-    const brPt = scores[Math.min(scores.length - 1, idxHigh)];
-
-    // Trier par x-y pour TR (max) et BL (min)
-    scores.sort((a, b) => a.xMy - b.xMy);
-    const blPt = scores[Math.max(0, idxLow)];
-    const trPt = scores[Math.min(scores.length - 1, idxHigh)];
-
+    // Bounding box
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let k = 0; k < bestComp.length; k++) {
-      const p = bestComp[k];
+    for (let k = 0; k < size; k++) {
+      const p = comp[k];
       const x = p % W;
       const y = (p - x) / W;
       if (x < minX) minX = x;
@@ -778,51 +850,170 @@ window.Calibration = (function() {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
-
-    // 5) Sanity checks
     const bboxW = maxX - minX + 1;
     const bboxH = maxY - minY + 1;
-    if (bboxW < W * 0.12 || bboxH < H * 0.12) {
-      if (debug) console.log('[calib] bbox too small', { bboxW, bboxH });
-      return null;
-    }
+    const bboxArea = bboxW * bboxH;
+
+    // Filtres durs : taille minimale
+    if (bboxW < W * 0.15 || bboxH < H * 0.10) return null;
     const ar = bboxW / bboxH;
-    if (ar < 0.25 || ar > 4.5) {
-      if (debug) console.log('[calib] aspect ratio off', { ar: ar.toFixed(2) });
+    if (ar < 0.35 || ar > 4.5) return null;
+    const fillBbox = size / bboxArea;
+    if (fillBbox < 0.30) return null;
+
+    // Extraire la frontière et calculer le convex hull
+    const boundary = extractBoundary(comp, W, H, mask);
+    if (boundary.length < 4) return null;
+    const hull = convexHull(boundary);
+    if (hull.length < 4) return null;
+
+    // Quadrilatère inscrit de max aire
+    const quad = maxAreaInscribedQuad(hull);
+    if (!quad) return null;
+
+    // Ordonner [TL, TR, BL, BR]
+    const ordered = orderCornersTLTRBLBR(quad);
+    if (!ordered) return null;
+
+    // Convexité (en normalisé [0,1])
+    const norm = ordered.map(p => ({ x: p.x / W, y: p.y / H }));
+    if (!isConvexQuad(norm)) return null;
+
+    // Rectangularité : rapport entre l'aire du quad et l'aire de sa bbox.
+    // Un vrai rectangle axé donne 1.0 ; un losange donne ~0.5.
+    const qArea = quadAreaOrdered(ordered[0], ordered[1], ordered[3], ordered[2]);
+    const rectangularity = qArea / bboxArea;
+
+    // Taux de remplissage du quad : combien de pixels de la composante tombent
+    // à l'intérieur du quad → proche de 1 pour un vrai rectangle.
+    const fillQuad = qArea > 0 ? Math.min(1, size / qArea) : 0;
+
+    // Filtres durs post-quad
+    // Rectangularity peut être basse (~0.5) pour un tableau tilté à ~45°,
+    // mais reste élevée pour un tableau raisonnablement cadré.
+    if (rectangularity < 0.48) return null;
+    if (fillQuad < 0.55) return null;
+
+    // Score de forme : on favorise
+    //   - la taille (log pour ne pas trop écraser les gros outliers)
+    //   - la rectangularité (proche de 1)
+    //   - le remplissage du quad
+    //   - un ratio d'aspect raisonnable (~1.0 à 2.5 pour un tableau AAC)
+    const arScore = 1.0 / (1.0 + Math.abs(Math.log(Math.max(ar, 1 / ar) / 1.6)));
+    const score = Math.log(1 + size) * rectangularity * fillQuad * arScore;
+
+    if (debug) {
+      console.log('[calib] candidate', {
+        size: size,
+        bbox: bboxW + 'x' + bboxH,
+        ar: ar.toFixed(2),
+        fillBbox: fillBbox.toFixed(2),
+        rect: rectangularity.toFixed(2),
+        fillQuad: fillQuad.toFixed(2),
+        score: score.toFixed(3)
+      });
+    }
+
+    return {
+      score,
+      quadPx: ordered,
+      quadNorm: norm,
+      metrics: { size, bboxW, bboxH, ar, rectangularity, fillQuad }
+    };
+  }
+
+  /** Détecte les 4 coins du tableau à partir d'une frame vidéo.
+   *  Retourne un tableau [TL,TR,BL,BR] en coordonnées normalisées [0,1],
+   *  ou null si la détection échoue. */
+  function detectBoardCorners(video) {
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 360;
+    const W = 320;
+    const H = Math.max(120, Math.round(W * vh / vw));
+
+    const cvs = document.createElement('canvas');
+    cvs.width = W;
+    cvs.height = H;
+    const ctx = cvs.getContext('2d', { willReadFrequently: true });
+    try {
+      ctx.drawImage(video, 0, 0, W, H);
+    } catch (e) { console.warn('[calib] drawImage failed', e); return null; }
+    let data;
+    try { data = ctx.getImageData(0, 0, W, H).data; }
+    catch (e) { console.warn('[calib] getImageData failed', e); return null; }
+
+    // 1) Masque de saturation : pixels colorés = probablement tableau.
+    const rawMask = new Uint8Array(W * H);
+    let rawMaskCount = 0;
+    for (let i = 0; i < W * H; i++) {
+      const j = i * 4;
+      const r = data[j], g = data[j + 1], b = data[j + 2];
+      const maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      if (maxC < 35) continue; // trop sombre
+      const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
+      const sat = (maxC - minC) / maxC;
+      if (sat > 0.18) {
+        rawMask[i] = 1;
+        rawMaskCount++;
+      }
+    }
+
+    const debug = (++_detectCounter % 10 === 0);
+    if (rawMaskCount < W * H * 0.012) {
+      if (debug) console.log('[calib] no colorful pixels', { rawMaskCount, pct: (rawMaskCount / (W * H) * 100).toFixed(1) + '%' });
       return null;
     }
 
-    // Taux de remplissage : la composante doit remplir au moins 35% de sa bbox
-    const fillRatio = bestSize / (bboxW * bboxH);
-    if (fillRatio < 0.35) {
-      if (debug) console.log('[calib] fill ratio too low', { fillRatio: fillRatio.toFixed(2) });
+    // 2) Ouverture (supprime bruit isolé et ponts fins entre blobs distincts)
+    //    puis fermeture (comble trous entre cellules colorées). L'ouverture
+    //    r=1 sépare les blobs reliés par des ponts <= 2px ; la fermeture r=2
+    //    rebouche les gaps internes entre cellules (~1-2px) sans rebâtir des
+    //    ponts plus larges vers les éléments voisins.
+    const opened = morphOpen(rawMask, W, H, 1);
+    const mask = morphClose(opened, W, H, 2);
+
+    // 3) Toutes les composantes connexes (pas seulement la plus grande)
+    const components = extractComponents(mask, W, H);
+    if (components.length === 0) {
+      if (debug) console.log('[calib] no components');
       return null;
     }
 
-    const rawCorners = [
-      { x: tlPt.x / W, y: tlPt.y / H },
-      { x: trPt.x / W, y: trPt.y / H },
-      { x: blPt.x / W, y: blPt.y / H },
-      { x: brPt.x / W, y: brPt.y / H }
-    ];
+    // Ne garder que les N plus grandes pour limiter le coût d'évaluation
+    components.sort((a, b) => b.length - a.length);
+    const MIN_COMP_SIZE = Math.max(60, Math.floor(W * H * 0.006));
+    const candidates = components
+      .filter(c => c.length >= MIN_COMP_SIZE)
+      .slice(0, 5);
 
-    // Validation de convexité
-    if (!isConvexQuad(rawCorners)) {
-      if (debug) console.log('[calib] non-convex quad, rejected');
+    if (candidates.length === 0) {
+      if (debug) console.log('[calib] all components too small');
+      return null;
+    }
+
+    // 4) Évaluer chaque candidat, garder le meilleur score
+    let best = null;
+    for (const comp of candidates) {
+      const res = evalComponent(comp, W, H, mask, debug);
+      if (res && (!best || res.score > best.score)) best = res;
+    }
+
+    if (!best) {
+      if (debug) console.log('[calib] no valid candidate');
       return null;
     }
 
     if (debug) {
       console.log('[calib] ✓ detected', {
-        size: (bestSize / (W * H) * 100).toFixed(1) + '%',
-        bbox: bboxW + 'x' + bboxH,
-        ar: ar.toFixed(2),
-        fill: (fillRatio * 100).toFixed(0) + '%'
+        score: best.score.toFixed(3),
+        ar: best.metrics.ar.toFixed(2),
+        rect: best.metrics.rectangularity.toFixed(2),
+        fill: best.metrics.fillQuad.toFixed(2)
       });
     }
 
-    // 6) Lissage temporel EMA
-    return smoothCorners(rawCorners);
+    // 5) Lissage temporel EMA
+    return smoothCorners(best.quadNorm);
   }
 
   function drawPreviewQuad(pts) {
