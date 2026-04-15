@@ -2,7 +2,7 @@
 // navigations et l'app shell (index.html, js, css), stale-while-revalidate
 // pour le reste. Évite les caches collants qui empêchent la propagation
 // des déploiements sans bump manuel.
-const CACHE_VERSION = 'aac-v23-network-first';
+const CACHE_VERSION = 'aac-v24-proxy';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -75,8 +75,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Ne jamais cacher l'API Anthropic
-  if (url.hostname === 'api.anthropic.com') return;
+  // Le proxy IA (Cloudflare Worker) ne doit jamais être servi depuis le cache :
+  // les réponses sont dynamiques par requête utilisateur.
+  if (url.hostname.endsWith('.workers.dev')) return;
 
   // MediaPipe / CDN jsDelivr — stale-while-revalidate avec cache runtime
   if (url.hostname === 'cdn.jsdelivr.net') {

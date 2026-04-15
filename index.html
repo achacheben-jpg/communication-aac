@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:10px;opacity:0.5;margin-top:2px">v17 · network-first SW</p>
+    <p style="font-size:10px;opacity:0.5;margin-top:2px">v18 · proxy IA</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -174,10 +174,10 @@
 
     <div class="setting-section-title">Prédiction IA</div>
     <div class="setting-row">
-      <span class="setting-label">clé API Anthropic</span>
-      <input type="password" id="inp-apikey" placeholder="sk-ant-..." class="setting-input" oninput="Prediction.saveKey(this.value)">
+      <span class="setting-label">URL du proxy</span>
+      <input type="url" id="inp-proxy-url" placeholder="https://aac-predict.xxx.workers.dev" class="setting-input" oninput="Prediction.saveProxyUrl(this.value)">
     </div>
-    <div class="setting-hint">Stockée uniquement sur cet appareil. Modèle utilisé : claude-haiku-4-5.</div>
+    <div class="setting-hint">Endpoint du Cloudflare Worker (voir <code>worker/README.md</code>). La clé API reste côté serveur.</div>
     <div class="setting-row">
       <span class="setting-label">prédiction active</span>
       <label class="setting-val">

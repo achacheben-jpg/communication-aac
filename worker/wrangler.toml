@@ -1,0 +1,12 @@
+name = "aac-predict"
+main = "predict.js"
+compatibility_date = "2024-10-01"
+
+# Origines autorisées (CORS). Remplacer par l'URL réelle de l'app
+# (GitHub Pages, Netlify, etc.). Plusieurs valeurs séparées par des virgules.
+[vars]
+ALLOWED_ORIGINS = "https://achacheben-jpg.github.io,http://localhost:8080,http://localhost:5173"
+
+# Le secret GEMINI_API_KEY se configure via :
+#   wrangler secret put GEMINI_API_KEY
+# Ne JAMAIS le mettre dans ce fichier (il est versionné dans git).
