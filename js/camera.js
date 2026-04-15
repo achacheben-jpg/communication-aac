@@ -568,8 +568,8 @@ window.Camera = (function() {
         catch (e) { console.warn('[camera] trackFrame error', e); }
       }
 
-      // Overlay calibration
-      if (Calibration.isCalibrated()) drawCalibOverlay(ctx, c);
+      // Overlay calibration : on ne dessine RIEN ici pour que la vidéo
+      // reste propre. Seul le marqueur de pointe du pied sera affiché.
 
       // Détection pied
       if (usePoseModel && poseInstance && !pendingSend) {
@@ -603,21 +603,42 @@ window.Camera = (function() {
       }
       const footPos = smoothedFootPos;
 
-      // Dessin : point vert PETIT pour la position brute (jitter visible)
-      const rawCss = Calibration.videoNormToCss ? Calibration.videoNormToCss(rawFootPos.x, rawFootPos.y, v) : { x: rawFootPos.x * c.width, y: rawFootPos.y * c.height };
+      // ═══ MARQUEUR UNIQUE : pointe du pied ═══
+      // Un seul marqueur sur la vidéo : un point précis à la position
+      // lissée, avec halo + contour blanc pour lisibilité sur n'importe
+      // quel fond, et une croix fine pour aider à juger la précision.
+      const footCss = Calibration.videoNormToCss
+        ? Calibration.videoNormToCss(footPos.x, footPos.y, v)
+        : { x: footPos.x * c.width, y: footPos.y * c.height };
+      const tx = footCss.x, ty = footCss.y;
+
+      // Halo extérieur (visibilité)
       ctx.beginPath();
-      ctx.arc(rawCss.x, rawCss.y, 5, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.arc(tx, ty, 11, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(29,158,117,0.25)';
       ctx.fill();
 
-      // Dessin : point vert GROS pour la position lissée (stable)
-      const footCss = Calibration.videoNormToCss ? Calibration.videoNormToCss(footPos.x, footPos.y, v) : { x: footPos.x * c.width, y: footPos.y * c.height };
+      // Anneau blanc (contraste sur tous fonds)
       ctx.beginPath();
-      ctx.arc(footCss.x, footCss.y, 14, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(29,158,117,0.55)';
-      ctx.fill();
+      ctx.arc(tx, ty, 6, 0, Math.PI * 2);
       ctx.strokeStyle = 'white';
       ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Point central plein (position précise)
+      ctx.beginPath();
+      ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#1d9e75';
+      ctx.fill();
+
+      // Croix fine (4 petits traits blancs) : aide à viser précisément
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tx - 11, ty); ctx.lineTo(tx - 7, ty);
+      ctx.moveTo(tx + 7, ty);  ctx.lineTo(tx + 11, ty);
+      ctx.moveTo(tx, ty - 11); ctx.lineTo(tx, ty - 7);
+      ctx.moveTo(tx, ty + 7);  ctx.lineTo(tx, ty + 11);
       ctx.stroke();
 
       if (!Calibration.isCalibrated()) return;
@@ -650,49 +671,8 @@ window.Camera = (function() {
         return; // saute le dessin de la cible rouge et le dwell
       }
 
-      // ═══ POINT ROUGE : endroit réellement sélectionné ═══
-      // On mappe le UV corrigé (dans le tableau) vers la caméra via
-      // bilinéaire forward, pour visualiser exactement où le système
-      // pense que le pied pointe (après application de l'offset vertical).
-      const targetCam = boardUVToCam(corrected);
-      if (targetCam) {
-        const targetCss = Calibration.videoNormToCss(targetCam.x, targetCam.y, v);
-        // Ligne pointillée entre pied brut et point de sélection
-        ctx.save();
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = 'rgba(231,76,60,0.5)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(footCss.x, footCss.y);
-        ctx.lineTo(targetCss.x, targetCss.y);
-        ctx.stroke();
-        ctx.restore();
-
-        // Point rouge pulsant + croix centrale
-        const tx = targetCss.x;
-        const ty = targetCss.y;
-        ctx.beginPath();
-        ctx.arc(tx, ty, 18, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(231,76,60,0.3)';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(tx, ty, 10, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(231,76,60,0.9)';
-        ctx.fill();
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        // Petite croix blanche au centre
-        ctx.beginPath();
-        ctx.moveTo(tx - 5, ty);
-        ctx.lineTo(tx + 5, ty);
-        ctx.moveTo(tx, ty - 5);
-        ctx.lineTo(tx, ty + 5);
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
+      // Pas de marqueur rouge de cible : le feedback de sélection se fait
+      // via le surlignage de la case active + la barre de dwell.
       handleDwell(cell);
     } finally {
       if (detectActive) animFrame = requestAnimationFrame(detectLoop);
@@ -839,19 +819,22 @@ window.Camera = (function() {
           if (dists[i] > maxDist) maxDist = dists[i];
         }
         if (maxDist > 0.001) {
-          // Centroïde lissé des pixels dans le top 35% de profondeur
-          const threshold = maxDist * 0.65;
-          let tipSumX = 0, tipSumY = 0, tipCount = 0;
+          // Centroïde pondéré du top 18% de profondeur : les pixels les
+          // plus proches de l'apex contribuent davantage → précision
+          // sous-pixel sur la pointe même.
+          const threshold = maxDist * 0.82;
+          let tipSumX = 0, tipSumY = 0, tipSumW = 0;
           for (let i = 0; i < bestPixels.length; i++) {
             if (dists[i] >= threshold) {
               const p = bestPixels[i];
-              tipSumX += p % w;
-              tipSumY += (p - (p % w)) / w;
-              tipCount++;
+              const wt = dists[i] - threshold + 1e-4; // poids > 0
+              tipSumX += (p % w) * wt;
+              tipSumY += ((p - (p % w)) / w) * wt;
+              tipSumW += wt;
             }
           }
-          if (tipCount > 2) {
-            return { x: tipSumX / tipCount / w, y: tipSumY / tipCount / h };
+          if (tipSumW > 0) {
+            return { x: tipSumX / tipSumW / w, y: tipSumY / tipSumW / h };
           }
         }
       }

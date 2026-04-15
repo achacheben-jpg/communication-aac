@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:13px;color:#5aa5d8;margin-top:4px;font-weight:600">v19 · déploiement auto</p>
+    <p style="font-size:13px;color:#5aa5d8;margin-top:4px;font-weight:600">v20 · pointe du pied</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -115,8 +115,8 @@
     </div>
     <div class="setting-row">
       <span class="setting-label">lissage mouvement</span>
-      <input type="range" min="0" max="0.95" step="0.05" value="0.6" id="sl-smooth" oninput="document.getElementById('val-smooth').textContent=parseFloat(this.value).toFixed(2)">
-      <span class="setting-val" id="val-smooth">0.60</span>
+      <input type="range" min="0" max="0.95" step="0.05" value="0.3" id="sl-smooth" oninput="document.getElementById('val-smooth').textContent=parseFloat(this.value).toFixed(2)">
+      <span class="setting-val" id="val-smooth">0.30</span>
     </div>
     <div class="setting-hint">Adapté à la spasticité : 0 = aucun lissage (réactif), 0.9 = très lisse (pied stabilisé). Augmenter si le pied "saute" trop entre les cases.</div>
     <div class="setting-row">
