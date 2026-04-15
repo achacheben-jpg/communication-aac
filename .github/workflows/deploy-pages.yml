@@ -1,0 +1,44 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Permet aussi de relancer manuellement depuis l'onglet Actions
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Évite les déploiements concurrents ; on garde le plus récent et on
+# laisse les déploiements en cours se terminer (sinon on pourrait laisser
+# un déploiement partiel).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # On publie la racine du repo (site statique, pas de build step).
+          # Le dossier `worker/` contient du code Cloudflare et n'est pas
+          # servi par le site : c'est sans impact (ignoré par le navigateur).
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

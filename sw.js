@@ -2,7 +2,7 @@
 // navigations et l'app shell (index.html, js, css), stale-while-revalidate
 // pour le reste. Évite les caches collants qui empêchent la propagation
 // des déploiements sans bump manuel.
-const CACHE_VERSION = 'aac-v24-proxy';
+const CACHE_VERSION = 'aac-v25-actions';
 const CORE_ASSETS = [
   './',
   './index.html',
