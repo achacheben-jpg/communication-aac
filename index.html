@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -22,7 +22,7 @@
   <div class="logo">
     <h1>Communication</h1>
     <p>tableau → voix</p>
-    <p style="font-size:13px;color:#5aa5d8;margin-top:4px;font-weight:600">v20 · pointe du pied</p>
+    <p style="font-size:13px;color:#5aa5d8;margin-top:4px;font-weight:600">v21 · a11y</p>
   </div>
   <div class="home-btns">
     <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
@@ -85,10 +85,10 @@
   <!-- Output -->
   <div class="output-bar">
     <div id="output-text"><span class="output-placeholder">Composez...</span></div>
-    <button class="out-btn complete" id="btn-complete" onclick="Prediction.completeNow()" title="Compléter la phrase">💡</button>
-    <button class="out-btn del" onclick="App.back()">←</button>
-    <button class="out-btn" onclick="App.clearAll()">✕</button>
-    <button class="out-btn speak" onclick="App.speak()">▶ Lire</button>
+    <button class="out-btn complete" id="btn-complete" onclick="Prediction.completeNow()" title="Compléter la phrase" aria-label="Compléter la phrase"><span aria-hidden="true">💡</span></button>
+    <button class="out-btn del" onclick="App.back()" aria-label="Effacer le dernier caractère"><span aria-hidden="true">←</span></button>
+    <button class="out-btn" onclick="App.clearAll()" aria-label="Tout effacer"><span aria-hidden="true">✕</span></button>
+    <button class="out-btn speak" onclick="App.speak()" aria-label="Lire le texte"><span aria-hidden="true">▶</span> Lire</button>
   </div>
 
   <!-- Toolbar -->
@@ -98,11 +98,11 @@
       <button class="mode-btn" id="btn-camera" onclick="App.setMode('camera')">📷 Caméra</button>
       <button class="mode-btn" id="btn-scan" onclick="App.setMode('scan')">🔊 Scan</button>
     </div>
-    <button class="tool-btn" onclick="App.toggleSettings()" title="Réglages">⚙</button>
-    <button class="tool-btn" onclick="App.showScreen('favorites'); Favorites.render();" title="Favoris">★</button>
-    <button class="tool-btn" onclick="Calibration.recaptureTemplates()" title="Recaler le cadre sur le tableau">↺</button>
-    <button class="tool-btn" onclick="App.showScreen('calib'); Calibration.reset(); Calibration.startCam();" title="Calibration">📐</button>
-    <button class="tool-btn" onclick="App.showScreen('home')" title="Accueil">🏠</button>
+    <button class="tool-btn" onclick="App.toggleSettings()" title="Réglages" aria-label="Réglages"><span aria-hidden="true">⚙</span></button>
+    <button class="tool-btn" onclick="App.showScreen('favorites'); Favorites.render();" title="Favoris" aria-label="Favoris"><span aria-hidden="true">★</span></button>
+    <button class="tool-btn" onclick="Calibration.recaptureTemplates()" title="Recaler le cadre sur le tableau" aria-label="Recaler le cadre sur le tableau"><span aria-hidden="true">↺</span></button>
+    <button class="tool-btn" onclick="App.showScreen('calib'); Calibration.reset(); Calibration.startCam();" title="Calibration" aria-label="Recalibrer"><span aria-hidden="true">📐</span></button>
+    <button class="tool-btn" onclick="App.showScreen('home')" title="Accueil" aria-label="Accueil"><span aria-hidden="true">🏠</span></button>
   </div>
 
   <!-- Settings -->
@@ -395,8 +395,8 @@
 ══════════════════════════════════════ -->
 <div id="screen-training" class="screen">
   <div class="fav-header">
-    <button onclick="App.showScreen('home')">←</button>
-    <h2>🧠 Apprentissage</h2>
+    <button onclick="App.showScreen('home')" aria-label="Retour à l'accueil"><span aria-hidden="true">←</span></button>
+    <h2><span aria-hidden="true">🧠</span> Apprentissage</h2>
   </div>
   <div class="training-body">
     <div class="training-step">
@@ -445,8 +445,8 @@
 ══════════════════════════════════════ -->
 <div id="screen-transcript" class="screen">
   <div class="fav-header">
-    <button onclick="App.closeTranscript()">←</button>
-    <h2>📝 Transcription</h2>
+    <button onclick="App.closeTranscript()" aria-label="Fermer la transcription"><span aria-hidden="true">←</span></button>
+    <h2><span aria-hidden="true">📝</span> Transcription</h2>
   </div>
   <div class="transcript-body">
     <div class="transcript-meta" id="transcript-meta"></div>
@@ -464,8 +464,8 @@
 ══════════════════════════════════════ -->
 <div id="screen-favorites" class="screen">
   <div class="fav-header">
-    <button onclick="App.showScreen('main')">←</button>
-    <h2>★ Favoris & historique</h2>
+    <button onclick="App.showScreen('main')" aria-label="Retour au tableau"><span aria-hidden="true">←</span></button>
+    <h2><span aria-hidden="true">★</span> Favoris & historique</h2>
   </div>
   <div class="fav-list" id="fav-list"></div>
 </div>

@@ -549,7 +549,10 @@ body {
 #dwell-bar { height: 100%; width: 0%; background: var(--green); border-radius: 2px; transition: width 0.1s linear; }
 
 /* TABLEAU */
-.tb-wrap { flex: 1; overflow: auto; min-height: 0; }
+/* overflow-y auto : on peut scroller verticalement si besoin sur petit écran.
+   overflow-x hidden : jamais de scroll horizontal — la personne qui pointe
+   au pied ne peut pas recentrer, le tableau doit tenir en largeur. */
+.tb-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
 
 .tb {
   display: grid;
