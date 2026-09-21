@@ -52,7 +52,7 @@ section { margin: 10px 12px 0; }
 .alt { border: 1px solid var(--blue); background: transparent; color: var(--text); border-radius: 8px; padding: 6px 10px; font-size: 15px; }
 
 #miniwrap.collapsed #mini { display: none; }
-#mini { position: relative; width: 100%; aspect-ratio: 1.55; background: #2471a3; border: 2px solid var(--red); border-radius: 6px; }
+#mini { position: relative; width: 100%; aspect-ratio: 1.63; background: #2471a3; border: 2px solid var(--red); border-radius: 6px; }
 .mc { position: absolute; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
   background: #f7d774; color: #222; border: 1px solid #2471a3; overflow: hidden; text-align: center; line-height: 1; }
 .mc.word { background: #7fb3e6; font-size: 8px; }

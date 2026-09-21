@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -87,6 +87,9 @@
           <option value="left">gauche</option>
           <option value="right">droite</option>
         </select></label>
+      <label class="chk"><input id="s-dark" type="checkbox"> Le pied porte une chaussette sombre</label>
+      <label>Niveau « sombre » (plus haut = accepte des chaussettes plus claires) : <span id="s-darklvl-v"></span>
+        <input id="s-darklvl" type="range" min="30" max="160" step="5"></label>
       <label class="chk"><input id="s-adapt" type="checkbox"> Suivre les changements de lumière</label>
       <label class="chk"><input id="s-mask" type="checkbox"> Afficher la zone détectée (orange)</label>
       <label class="chk"><input id="s-non" type="checkbox"> « non » efface la dernière case</label>
@@ -105,10 +108,10 @@
     </div>
   </div>
 
-  <script src="js/board.js?v=2"></script>
-  <script src="js/vision.js?v=2"></script>
-  <script src="js/ia.js?v=2"></script>
-  <script src="js/app.js?v=2"></script>
+  <script src="js/board.js?v=3"></script>
+  <script src="js/vision.js?v=3"></script>
+  <script src="js/ia.js?v=3"></script>
+  <script src="js/app.js?v=3"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
   </script>

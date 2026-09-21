@@ -12,6 +12,8 @@ window.App = (function () {
     entry: 'bottom',     // côté par lequel le pied arrive sur le tableau
     offset: 0,           // décalage de la pointe
     adapt: true,         // référence qui suit la lumière
+    darkSock: true,      // le pied porte une chaussette sombre
+    darkLevel: 80,       // niveau de luminosité max de la chaussette
     showMask: true,      // afficher la zone détectée
     announce: true,      // dire chaque case à voix haute
     autoIA: true,        // reconstitution automatique
@@ -168,7 +170,7 @@ window.App = (function () {
     lastT = t;
     if (calibrating) { drawOverlay(null); return; }
     if (!running || !mapFn || !Vision.hasReference() || video.readyState < 2 || video.paused) return;
-    const r = Vision.analyze(video, { threshold: S.threshold, entry: S.entry, offset: S.offset, adapt: S.adapt });
+    const r = Vision.analyze(video, { threshold: S.threshold, entry: S.entry, offset: S.offset, adapt: S.adapt, darkSock: S.darkSock, darkLevel: S.darkLevel });
     let cell = null;
     if (r.present) cell = Board.cellAt(r.u, r.v);
     updateDwell(cell, r.present, t);
@@ -389,6 +391,7 @@ window.App = (function () {
     $('s-off').value = S.offset; $('s-off-v').textContent = S.offset;
     $('s-entry').value = S.entry;
     $('s-adapt').checked = S.adapt; $('s-mask').checked = S.showMask;
+    $('s-dark').checked = S.darkSock; $('s-darklvl').value = S.darkLevel; $('s-darklvl-v').textContent = S.darkLevel;
     $('s-announce').checked = S.announce; $('s-auto').checked = S.autoIA; $('s-non').checked = S.nonErases;
     $('s-key').value = IA.getKey();
     $('settings').classList.remove('hidden');
@@ -400,6 +403,8 @@ window.App = (function () {
     $('s-off').oninput = e => { S.offset = +e.target.value; $('s-off-v').textContent = S.offset; saveSettings(); };
     $('s-entry').onchange = e => { S.entry = e.target.value; saveSettings(); };
     $('s-adapt').onchange = e => { S.adapt = e.target.checked; saveSettings(); };
+    $('s-dark').onchange = e => { S.darkSock = e.target.checked; saveSettings(); };
+    $('s-darklvl').oninput = e => { S.darkLevel = +e.target.value; $('s-darklvl-v').textContent = S.darkLevel; saveSettings(); };
     $('s-mask').onchange = e => { S.showMask = e.target.checked; saveSettings(); };
     $('s-announce').onchange = e => { S.announce = e.target.checked; saveSettings(); };
     $('s-auto').onchange = e => { S.autoIA = e.target.checked; saveSettings(); };

@@ -92,13 +92,15 @@ window.Vision = (function () {
     if (!lut || !ref) return { present: false };
     grab(video);
     const thr = opt.threshold;
+    // Mode "chaussette sombre" : en plus d'avoir changé par rapport à la
+    // référence, le point doit être sombre (le tableau est jaune/bleu clair,
+    // les ombres restent plus claires qu'une chaussette noire).
+    const dark = opt.darkSock ? (opt.darkLevel || 80) : 999;
     let count = 0;
     for (let k = 0; k < W * H; k++) {
-      const d0 = Math.abs(cur[k * 3] - ref[k * 3]);
-      const d1 = Math.abs(cur[k * 3 + 1] - ref[k * 3 + 1]);
-      const d2 = Math.abs(cur[k * 3 + 2] - ref[k * 3 + 2]);
-      const d = Math.max(d0, d1, d2);
-      mask[k] = d > thr ? 1 : 0;
+      const r = cur[k * 3], g = cur[k * 3 + 1], b = cur[k * 3 + 2];
+      const d = Math.max(Math.abs(r - ref[k * 3]), Math.abs(g - ref[k * 3 + 1]), Math.abs(b - ref[k * 3 + 2]));
+      mask[k] = (d > thr && Math.max(r, g, b) < dark) ? 1 : 0;
     }
     // Nettoyage : un pixel n'est gardé que s'il a au moins 5 voisins actifs
     for (let j = 0; j < H; j++) {
@@ -127,12 +129,17 @@ window.Vision = (function () {
     const n1 = along ? H : W, n2 = along ? W : H;
     const dir = (opt.entry === 'bottom' || opt.entry === 'right') ? 1 : -1;
     const start = dir === 1 ? 0 : n1 - 1;
-    let found = -1;
-    for (let s = 0; s < n1; s++) {
-      const a = start + dir * s;
+    // Une tranche compte si elle a ≥ 3 points ET que la tranche suivante
+    // (vers l'entrée du pied) en a aussi : évite les points isolés.
+    const sliceCount = a => {
       let c = 0;
       for (let b = 0; b < n2; b++) { c += along ? mask2[a * W + b] : mask2[b * W + a]; }
-      if (c >= 2) { found = a; break; }
+      return c;
+    };
+    let found = -1;
+    for (let s = 0; s < n1 - 1; s++) {
+      const a = start + dir * s;
+      if (sliceCount(a) >= 3 && sliceCount(a + dir) >= 3) { found = a; break; }
     }
     if (found < 0) return { present: false, area: count, mask: mask2 };
     const pos = [];
