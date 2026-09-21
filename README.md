@@ -49,3 +49,17 @@ phrase et la lit à voix haute.
 
 Le site est publié automatiquement par GitHub Pages à chaque modification de
 la branche `main`.
+
+## Apprentissage automatique
+
+- **Phrase fausse** : bouton « Ce n'est pas ça : noter la bonne phrase », taper
+  la phrase correcte. Elle est mémorisée : la même suite de cases donnera
+  directement cette phrase, et l'IA reçoit les phrases apprises comme exemples
+  de la façon d'écrire de la personne.
+- **Case mal détectée** : toucher la case dans « Ce qu'il montre », puis la
+  bonne case sur le mini tableau. À partir de 3 corrections, l'application
+  calcule le décalage moyen entre la pointe détectée et la case visée et
+  l'applique automatiquement.
+- Réglages → Apprentissage : voir le bilan, partager le fichier
+  d'apprentissages (utile pour l'analyse), l'importer sur un autre téléphone,
+  ou tout oublier.

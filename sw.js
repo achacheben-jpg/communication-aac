@@ -1,6 +1,6 @@
 // Service worker minimal : on va toujours chercher la version en ligne,
 // et on garde une copie pour pouvoir ouvrir l'app sans réseau.
-const CACHE = 'tableau-v3';
+const CACHE = 'tableau-v4';
 self.addEventListener('install', e => { self.skipWaiting(); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));

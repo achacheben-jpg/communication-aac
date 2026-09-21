@@ -45,6 +45,10 @@ section { margin: 10px 12px 0; }
 #seq { display: flex; gap: 6px; overflow-x: auto; min-height: 52px; padding: 6px; background: var(--panel); border-radius: 12px; }
 .chip { flex: 0 0 auto; padding: 8px 12px; border-radius: 10px; font-size: 22px; font-weight: 700; background: #f7d774; color: #222; }
 .chip.word, .chip.non { background: #7fb3e6; font-size: 17px; }
+.chip.fixing { outline: 3px solid var(--orange); outline-offset: 2px; }
+.chip.fixed { box-shadow: inset 0 -4px 0 var(--green); }
+.btn.learn { background: #8e44ad; font-size: 15px; }
+.hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.35; }
 
 #phrase { font-size: 28px; font-weight: 700; line-height: 1.25; background: var(--panel); border-radius: 12px; padding: 12px; min-height: 60px; }
 #phrase.raw { color: var(--muted); font-weight: 500; }

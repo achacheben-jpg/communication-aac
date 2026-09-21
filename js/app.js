@@ -41,6 +41,8 @@ window.App = (function () {
   // Sélection par maintien
   const hist = [];             // dernières cases candidates
   let hoverCell = null, hoverSince = 0, armed = true, absentSince = 0;
+  let lastTip = null;          // dernière position de la pointe (u,v)
+  let fixIndex = -1;           // index de la case en cours de correction (-1 = aucune)
 
   try { corners = JSON.parse(localStorage.getItem('aac_corners') || 'null'); } catch (e) { }
 
@@ -172,7 +174,14 @@ window.App = (function () {
     if (!running || !mapFn || !Vision.hasReference() || video.readyState < 2 || video.paused) return;
     const r = Vision.analyze(video, { threshold: S.threshold, entry: S.entry, offset: S.offset, adapt: S.adapt, darkSock: S.darkSock, darkLevel: S.darkLevel });
     let cell = null;
-    if (r.present) cell = Board.cellAt(r.u, r.v);
+    if (r.present) {
+      // Décalage appris automatiquement grâce aux corrections
+      const lo = Learn.learnedOffset();
+      r.u = Math.min(1, Math.max(0, r.u + lo.u));
+      r.v = Math.min(1, Math.max(0, r.v + lo.v));
+      lastTip = { u: r.u, v: r.v };
+      cell = Board.cellAt(r.u, r.v);
+    }
     updateDwell(cell, r.present, t);
     drawOverlay(r);
   }
@@ -207,13 +216,16 @@ window.App = (function () {
   }
 
   // ═════════ Sélection, phrase, voix ═════════
-  function select(cell) {
+  function select(cell, manual) {
     if (cell.kind === 'non' && S.nonErases && seq.length) {
       seq.pop();
       beep(300);
       if (S.announce) speak('effacé');
     } else {
-      seq.push(cell);
+      // On garde la position de la pointe pour pouvoir apprendre des corrections
+      const item = Object.assign({}, cell, { tipU: null, tipV: null });
+      if (!manual && lastTip) { item.tipU = lastTip.u; item.tipV = lastTip.v; }
+      seq.push(item);
       beep(880);
       if (S.announce) speak(cell.value);
     }
@@ -224,18 +236,61 @@ window.App = (function () {
     scheduleIA();
   }
 
-  function addManual(cell) { unlockAudio(); select(cell); }
+  function addManual(cell) {
+    unlockAudio();
+    if (fixIndex >= 0 && fixIndex < seq.length) {
+      // Correction d'une case détectée : on remplace et on apprend le décalage
+      const old = seq[fixIndex];
+      if (old.tipU != null) Learn.addCellFix(old.tipU, old.tipV, old, cell);
+      seq[fixIndex] = Object.assign({}, cell, { tipU: old.tipU, tipV: old.tipV, fixed: true });
+      fixIndex = -1;
+      phrase = '';
+      renderSeq();
+      const st = Learn.stats();
+      setStatus(`Corrigé : « ${old.label} » → « ${cell.label} ». Corrections apprises : ${st.cellFixes}.`);
+      scheduleIA();
+      return;
+    }
+    select(cell, true);
+  }
 
-  function eraseLast() { seq.pop(); phrase = ''; renderSeq(); scheduleIA(); }
-  function eraseAll() { seq.length = 0; phrase = ''; $('alts').innerHTML = ''; renderSeq(); }
+  /** Touche sur une case déjà validée : on prépare son remplacement. */
+  function startFix(i) {
+    if (fixIndex === i) { fixIndex = -1; renderSeq(); setStatus(''); return; }
+    fixIndex = i;
+    renderSeq();
+    $('miniwrap').classList.remove('collapsed');
+    setStatus(`Touchez la bonne case sur le mini tableau pour remplacer « ${seq[i].label} ».`);
+  }
+
+  /** L'aidant tape la phrase correcte : l'application l'apprend. */
+  function correctPhrase() {
+    if (!seq.length) { setStatus('Rien à corriger : aucune case.', true); return; }
+    const current = phrase || IA.naive(seq);
+    const txt = prompt('Quelle était la bonne phrase ?', current);
+    if (txt == null) return;
+    const clean = txt.trim();
+    if (!clean) return;
+    Learn.addExample(seq, clean);
+    phrase = clean;
+    $('phrase').textContent = clean;
+    $('phrase').classList.remove('raw');
+    $('alts').innerHTML = '';
+    const st = Learn.stats();
+    setStatus(`Phrase apprise. ${st.examples} phrase(s) mémorisée(s) : l'IA s'en servira la prochaine fois.`);
+  }
+
+  function eraseLast() { seq.pop(); fixIndex = -1; phrase = ''; renderSeq(); scheduleIA(); }
+  function eraseAll() { seq.length = 0; fixIndex = -1; phrase = ''; $('alts').innerHTML = ''; renderSeq(); }
 
   function renderSeq() {
     const el = $('seq');
     el.innerHTML = '';
-    seq.forEach(c => {
+    seq.forEach((c, i) => {
       const chip = document.createElement('span');
-      chip.className = 'chip ' + c.kind;
+      chip.className = 'chip ' + c.kind + (i === fixIndex ? ' fixing' : '') + (c.fixed ? ' fixed' : '');
       chip.textContent = c.label;
+      chip.addEventListener('click', () => startFix(i));
       el.appendChild(chip);
     });
     el.scrollLeft = el.scrollWidth;
@@ -256,6 +311,7 @@ window.App = (function () {
     try {
       const r = await IA.reconstruct(seq.slice());
       phrase = r.phrase;
+      if (r.fromMemory) setStatus('Phrase reconnue grâce à une correction précédente.');
       $('phrase').textContent = phrase;
       $('phrase').classList.remove('raw');
       const alts = $('alts');
@@ -394,7 +450,16 @@ window.App = (function () {
     $('s-dark').checked = S.darkSock; $('s-darklvl').value = S.darkLevel; $('s-darklvl-v').textContent = S.darkLevel;
     $('s-announce').checked = S.announce; $('s-auto').checked = S.autoIA; $('s-non').checked = S.nonErases;
     $('s-key').value = IA.getKey();
+    renderLearnStats();
     $('settings').classList.remove('hidden');
+  }
+  function renderLearnStats() {
+    const st = Learn.stats();
+    const o = st.offset;
+    $('s-learn').textContent =
+      `${st.examples} phrase(s) apprise(s), ${st.cellFixes} case(s) corrigée(s). ` +
+      (o.n >= 3 ? `Décalage appris : ${(o.u * 100).toFixed(1)} % en largeur, ${(o.v * 100).toFixed(1)} % en hauteur.`
+        : `Décalage automatique actif à partir de 3 cases corrigées (${o.n}/3).`);
   }
   function closeSettings() { $('settings').classList.add('hidden'); }
   function bindSettings() {
@@ -412,6 +477,20 @@ window.App = (function () {
     $('s-key').onchange = e => IA.setKey(e.target.value.trim());
     $('s-file').onchange = e => { if (e.target.files[0]) useVideoFile(e.target.files[0]); };
     $('s-camera').onclick = () => { startCamera(); closeSettings(); };
+    $('s-export').onclick = async () => {
+      const txt = Learn.exportJSON();
+      try {
+        if (navigator.share) await navigator.share({ title: 'Apprentissages tableau', text: txt });
+        else { await navigator.clipboard.writeText(txt); alert('Apprentissages copiés dans le presse-papiers.'); }
+      } catch (e) { try { await navigator.clipboard.writeText(txt); alert('Apprentissages copiés dans le presse-papiers.'); } catch (_) { alert(txt); } }
+    };
+    $('s-import').onchange = e => {
+      const f = e.target.files[0]; if (!f) return;
+      f.text().then(t => { Learn.importJSON(t); renderLearnStats(); alert('Apprentissages importés.'); })
+        .catch(err => alert('Fichier illisible : ' + err.message));
+    };
+    $('s-learn-reset-cells').onclick = () => { if (confirm('Oublier les corrections de cases (décalage appris) ?')) { Learn.resetCellFixes(); renderLearnStats(); } };
+    $('s-learn-reset').onclick = () => { if (confirm('Tout oublier (phrases et cases) ?')) { Learn.resetAll(); renderLearnStats(); } };
     $('s-reset').onclick = () => {
       if (!confirm('Effacer la calibration du tableau ?')) return;
       try { localStorage.removeItem('aac_corners'); } catch (e) { }
@@ -432,6 +511,7 @@ window.App = (function () {
     $('btn-close').onclick = closeSettings;
     $('btn-ia').onclick = () => { unlockAudio(); runIA(); };
     $('btn-read').onclick = readAloud;
+    $('btn-fix').onclick = correctPhrase;
     $('btn-erase').onclick = eraseLast;
     $('btn-clear').onclick = () => { if (!seq.length || confirm('Tout effacer ?')) eraseAll(); };
     $('btn-mini').onclick = () => $('miniwrap').classList.toggle('collapsed');

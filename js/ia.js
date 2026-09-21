@@ -32,15 +32,27 @@ Donne 0 à 3 alternatives, courtes. Pas de texte autour du JSON.`;
 
   /** Reconstitution par l'IA. Renvoie { phrase, alternatives }. */
   async function reconstruct(items) {
+    // Suite de cases déjà corrigée une fois → on connaît la réponse
+    const known = window.Learn ? Learn.knownPhrase(items) : null;
+    if (known) return { phrase: known, alternatives: [], fromMemory: true };
     const key = getKey();
     if (!key) throw new Error('Aucune clé API. Ouvrez les réglages pour la saisir.');
-    const seq = items.map(it => it.kind === 'sound' ? it.value : `[${it.value}]`).join(' ');
+    const fmt = list => list.map(it => it.kind === 'sound' ? it.value : `[${it.value}]`).join(' ');
+    const seq = fmt(items);
+    // Exemples appris (corrections faites à la main) : montrent à l'IA
+    // la façon d'écrire de la personne.
+    let system = SYSTEM;
+    const ex = (window.Learn ? Learn.examplesForIA(40) : []);
+    if (ex.length) {
+      system += '\n\nVoici des phrases réelles de cette personne, avec la suite de cases pointées et la phrase correcte (confirmée par un proche). Imite sa façon d\'écrire, ses raccourcis et ses habitudes :\n' +
+        ex.map(e => `- ${e.labels.join(' ')}  →  ${e.phrase}`).join('\n');
+    }
     const body = {
       model: 'claude-opus-5',
       max_tokens: 400,
       output_config: { effort: 'low' },
       fallbacks: 'default',
-      system: SYSTEM,
+      system,
       messages: [{ role: 'user', content: `Cases pointées (les mots entiers sont entre crochets) : ${seq}` }]
     };
     const res = await fetch('https://api.anthropic.com/v1/messages', {

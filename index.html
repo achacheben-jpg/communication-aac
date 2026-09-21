@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
 
@@ -60,6 +60,10 @@
       <button id="btn-ia" class="btn primary">✨ Reconstituer</button>
       <button id="btn-read" class="btn primary">🔊 Lire</button>
     </div>
+    <div class="row">
+      <button id="btn-fix" class="btn learn">✏️ Ce n'est pas ça : noter la bonne phrase</button>
+    </div>
+    <p class="hint">Pour corriger une case mal détectée : touchez-la dans « Ce qu'il montre », puis touchez la bonne case du mini tableau. L'application apprend de chaque correction.</p>
   </section>
 
   <!-- Mini tableau -->
@@ -100,6 +104,14 @@
       <label>Clé API Anthropic (reste sur ce téléphone)
         <input id="s-key" type="password" placeholder="sk-ant-…" autocomplete="off"></label>
 
+      <h3>Apprentissage</h3>
+      <p id="s-learn" class="hint"></p>
+      <button id="s-export" class="btn">📤 Partager / copier les apprentissages</button>
+      <label>Importer un fichier d'apprentissages
+        <input id="s-import" type="file" accept=".json,application/json,text/plain"></label>
+      <button id="s-learn-reset-cells" class="btn">Oublier le décalage appris</button>
+      <button id="s-learn-reset" class="btn danger">Tout oublier</button>
+
       <h3>Test et remise à zéro</h3>
       <label>Tester avec une vidéo du téléphone
         <input id="s-file" type="file" accept="video/*"></label>
@@ -108,10 +120,11 @@
     </div>
   </div>
 
-  <script src="js/board.js?v=3"></script>
-  <script src="js/vision.js?v=3"></script>
-  <script src="js/ia.js?v=3"></script>
-  <script src="js/app.js?v=3"></script>
+  <script src="js/board.js?v=4"></script>
+  <script src="js/vision.js?v=4"></script>
+  <script src="js/learn.js?v=4"></script>
+  <script src="js/ia.js?v=4"></script>
+  <script src="js/app.js?v=4"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
   </script>
