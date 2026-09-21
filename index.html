@@ -1,506 +1,116 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0a0a0f">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="apple-touch-icon" href="icon.svg">
-<link rel="stylesheet" href="css/style.css">
-<title>Communication</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f1720">
+  <title>Lecture du tableau</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body>
 
-<!-- ══════════════════════════════════════
-     ÉCRAN 1 : ACCUEIL
-══════════════════════════════════════ -->
-<div id="screen-home" class="screen active">
-  <div class="logo">
-    <h1>Communication</h1>
-    <p>tableau → voix</p>
-    <p style="font-size:13px;color:#5aa5d8;margin-top:4px;font-weight:600">v21 · a11y</p>
-  </div>
-  <div class="home-btns">
-    <button class="btn-primary" onclick="App.goCalib()">📷 Démarrer avec caméra</button>
-    <button class="btn-secondary" onclick="App.goMain('manual')">✋ Mode manuel uniquement</button>
-    <button class="btn-secondary" onclick="App.goMain('scan')">🔊 Mode scan (son)</button>
-    <button class="btn-secondary" onclick="App.pickVideoFile()">🎬 Analyser une vidéo</button>
-    <button class="btn-secondary" onclick="App.showScreen('training')">🧠 Apprentissage</button>
-    <button class="btn-ghost" onclick="App.showScreen('favorites'); Favorites.render();">★ Favoris</button>
-  </div>
-  <!-- Hidden file input pour l'upload vidéo -->
-  <input type="file" id="video-file-input" accept="video/*" style="display:none" onchange="App.onVideoFileSelected(event)">
-  <input type="file" id="training-file-input" accept="video/*" style="display:none" onchange="App.onTrainingFileSelected(event)">
-</div>
+  <header>
+    <span class="title">Lecture du tableau</span>
+    <button id="btn-calib" class="btn small">📐 Calibrer</button>
+    <button id="btn-ref" class="btn small">📷 Référence</button>
+    <button id="btn-settings" class="btn small icon" aria-label="Réglages">⚙</button>
+  </header>
 
-<!-- ══════════════════════════════════════
-     ÉCRAN 2 : CALIBRATION
-══════════════════════════════════════ -->
-<div id="screen-calib" class="screen">
-  <div class="calib-header">
-    <h2>Calibration</h2>
-    <p>Pointez les 4 coins du tableau</p>
+  <!-- Caméra -->
+  <div id="cambox">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+    <div id="handles" class="hidden">
+      <div class="handle" data-i="0"><span>HG</span></div>
+      <div class="handle" data-i="1"><span>HD</span></div>
+      <div class="handle" data-i="2"><span>BD</span></div>
+      <div class="handle" data-i="3"><span>BG</span></div>
+    </div>
   </div>
+  <div id="calibbar" class="hidden">
+    <p>Glissez chaque point sur le coin du tableau : <b>HG</b> = haut-gauche (près du 0), <b>HD</b> = haut-droit, <b>BD</b> = bas-droit, <b>BG</b> = bas-gauche. Le pied doit être <b>hors</b> du tableau.</p>
+    <button id="btn-ok" class="btn primary">✔ Valider</button>
+    <button id="btn-cancel" class="btn">Annuler</button>
+  </div>
+  <div id="status">Démarrage…</div>
 
-  <div class="cam-container">
-    <video id="video-calib" autoplay playsinline muted></video>
-    <canvas id="canvas-calib"></canvas>
+  <!-- Case en cours -->
+  <div id="hoverwrap">
+    <div id="hover">—</div>
+    <div class="bar"><div id="hoverbar"></div></div>
   </div>
 
-  <div class="calib-steps">
-    <div class="step-dot" id="dot-0"></div>
-    <div class="step-dot" id="dot-1"></div>
-    <div class="step-dot" id="dot-2"></div>
-    <div class="step-dot" id="dot-3"></div>
-  </div>
+  <!-- Ce qu'il montre -->
+  <section>
+    <div class="label">Ce qu'il montre <button id="btn-erase" class="btn tiny">⌫ dernière</button> <button id="btn-clear" class="btn tiny">🗑 tout</button></div>
+    <div id="seq"></div>
+  </section>
 
-  <div class="calib-instruction" id="calib-msg">
-    Appuyez sur <b>Démarrer</b> pour ouvrir la caméra.
-  </div>
+  <!-- Phrase -->
+  <section>
+    <div class="label">Phrase</div>
+    <div id="phrase" class="raw">…</div>
+    <div id="alts"></div>
+    <div class="row">
+      <button id="btn-ia" class="btn primary">✨ Reconstituer</button>
+      <button id="btn-read" class="btn primary">🔊 Lire</button>
+    </div>
+  </section>
 
-  <div class="calib-actions">
-    <button class="btn-secondary" onclick="App.showScreen('home')">← Retour</button>
-    <button class="btn-secondary" id="calib-auto-btn" onclick="Calibration.auto()" style="display:none">⚡ Auto</button>
-    <button class="btn-secondary" id="calib-manual-btn" onclick="Calibration.startManualTap()" style="display:none">✋ Pointer</button>
-    <button class="btn-primary" id="calib-action-btn" onclick="Calibration.action()">Démarrer caméra</button>
-  </div>
-</div>
+  <!-- Mini tableau -->
+  <section id="miniwrap">
+    <div class="label">Tableau (toucher une case = l'ajouter) <button id="btn-mini" class="btn tiny">afficher / masquer</button></div>
+    <div id="mini"></div>
+  </section>
 
-<!-- ══════════════════════════════════════
-     ÉCRAN 3 : TABLEAU PRINCIPAL
-══════════════════════════════════════ -->
-<div id="screen-main" class="screen">
+  <!-- Réglages -->
+  <div id="settings" class="hidden">
+    <div class="panel">
+      <div class="panel-head"><b>Réglages</b><button id="btn-close" class="btn small">Fermer</button></div>
 
-  <!-- Prediction suggestions -->
-  <div class="pred-bar" id="pred-bar">
-    <button class="pred-chip empty" id="pred-0">suggestions</button>
-    <button class="pred-chip empty" id="pred-1">—</button>
-    <button class="pred-chip empty" id="pred-2">—</button>
-  </div>
+      <h3>Détection</h3>
+      <label>Temps de maintien : <span id="s-dwell-v"></span>
+        <input id="s-dwell" type="range" min="0.5" max="3" step="0.1"></label>
+      <label>Sensibilité (plus bas = plus sensible) : <span id="s-thr-v"></span>
+        <input id="s-thr" type="range" min="10" max="120" step="2"></label>
+      <label>Décalage de la pointe : <span id="s-off-v"></span>
+        <input id="s-off" type="range" min="-0.1" max="0.1" step="0.005"></label>
+      <label>Le pied arrive par le côté :
+        <select id="s-entry">
+          <option value="bottom">bas du tableau (ligne 9)</option>
+          <option value="top">haut du tableau (ligne 0)</option>
+          <option value="left">gauche</option>
+          <option value="right">droite</option>
+        </select></label>
+      <label class="chk"><input id="s-adapt" type="checkbox"> Suivre les changements de lumière</label>
+      <label class="chk"><input id="s-mask" type="checkbox"> Afficher la zone détectée (orange)</label>
+      <label class="chk"><input id="s-non" type="checkbox"> « non » efface la dernière case</label>
 
-  <!-- Output -->
-  <div class="output-bar">
-    <div id="output-text"><span class="output-placeholder">Composez...</span></div>
-    <button class="out-btn complete" id="btn-complete" onclick="Prediction.completeNow()" title="Compléter la phrase" aria-label="Compléter la phrase"><span aria-hidden="true">💡</span></button>
-    <button class="out-btn del" onclick="App.back()" aria-label="Effacer le dernier caractère"><span aria-hidden="true">←</span></button>
-    <button class="out-btn" onclick="App.clearAll()" aria-label="Tout effacer"><span aria-hidden="true">✕</span></button>
-    <button class="out-btn speak" onclick="App.speak()" aria-label="Lire le texte"><span aria-hidden="true">▶</span> Lire</button>
-  </div>
+      <h3>Voix et IA</h3>
+      <label class="chk"><input id="s-announce" type="checkbox"> Dire chaque case à voix haute</label>
+      <label class="chk"><input id="s-auto" type="checkbox"> Reconstituer automatiquement la phrase</label>
+      <label>Clé API Anthropic (reste sur ce téléphone)
+        <input id="s-key" type="password" placeholder="sk-ant-…" autocomplete="off"></label>
 
-  <!-- Toolbar -->
-  <div class="toolbar">
-    <div class="mode-pill">
-      <button class="mode-btn" id="btn-manual" onclick="App.setMode('manual')">✋ Manuel</button>
-      <button class="mode-btn" id="btn-camera" onclick="App.setMode('camera')">📷 Caméra</button>
-      <button class="mode-btn" id="btn-scan" onclick="App.setMode('scan')">🔊 Scan</button>
-    </div>
-    <button class="tool-btn" onclick="App.toggleSettings()" title="Réglages" aria-label="Réglages"><span aria-hidden="true">⚙</span></button>
-    <button class="tool-btn" onclick="App.showScreen('favorites'); Favorites.render();" title="Favoris" aria-label="Favoris"><span aria-hidden="true">★</span></button>
-    <button class="tool-btn" onclick="Calibration.recaptureTemplates()" title="Recaler le cadre sur le tableau" aria-label="Recaler le cadre sur le tableau"><span aria-hidden="true">↺</span></button>
-    <button class="tool-btn" onclick="App.showScreen('calib'); Calibration.reset(); Calibration.startCam();" title="Calibration" aria-label="Recalibrer"><span aria-hidden="true">📐</span></button>
-    <button class="tool-btn" onclick="App.showScreen('home')" title="Accueil" aria-label="Accueil"><span aria-hidden="true">🏠</span></button>
-  </div>
-
-  <!-- Settings -->
-  <div id="settings-panel">
-    <div class="setting-section-title">Général</div>
-    <div class="setting-row">
-      <span class="setting-label">maintien (s)</span>
-      <input type="range" min="0.3" max="4" step="0.1" value="1.5" id="sl-dwell" oninput="document.getElementById('val-dwell').textContent=parseFloat(this.value).toFixed(1)+'s'">
-      <span class="setting-val" id="val-dwell">1.5s</span>
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">lissage mouvement</span>
-      <input type="range" min="0" max="0.95" step="0.05" value="0.3" id="sl-smooth" oninput="document.getElementById('val-smooth').textContent=parseFloat(this.value).toFixed(2)">
-      <span class="setting-val" id="val-smooth">0.30</span>
-    </div>
-    <div class="setting-hint">Adapté à la spasticité : 0 = aucun lissage (réactif), 0.9 = très lisse (pied stabilisé). Augmenter si le pied "saute" trop entre les cases.</div>
-    <div class="setting-row">
-      <span class="setting-label">vitesse voix</span>
-      <input type="range" min="0.5" max="1.5" step="0.1" value="0.9" id="sl-speed" oninput="document.getElementById('val-speed').textContent=parseFloat(this.value).toFixed(1)+'×'">
-      <span class="setting-val" id="val-speed">0.9×</span>
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">décalage haut (lignes)</span>
-      <input type="range" min="0" max="5" step="0.5" value="2" id="sl-offset" oninput="document.getElementById('val-offset').textContent=parseFloat(this.value).toFixed(1)">
-      <span class="setting-val" id="val-offset">2.0</span>
-    </div>
-
-    <div class="setting-section-title">Source caméra</div>
-    <div class="setting-row">
-      <span class="setting-label">mode détection</span>
-      <select id="sl-cam-source" class="setting-input" onchange="Camera.setSource(this.value)">
-        <option value="fixed">Caméra fixe (pied seul)</option>
-        <option value="handheld">iPhone (corps entier)</option>
-      </select>
-    </div>
-    <div class="setting-hint">"Fixe" : détection par pixels (soustraction de fond). "iPhone" : MediaPipe Pose (le corps doit être visible).</div>
-    <div class="setting-row">
-      <span class="setting-label">recapturer le fond</span>
-      <button class="btn-ghost" onclick="Camera.captureBackground && Camera.captureBackground()">Capturer maintenant</button>
-    </div>
-    <div class="setting-hint">En mode "Fixe" : retire le pied du cadre puis touche ce bouton pour réapprendre le fond.</div>
-
-    <div class="setting-section-title">Voix automatique</div>
-    <div class="setting-row">
-      <span class="setting-label">lire chaque sélection</span>
-      <label class="setting-val">
-        <input type="checkbox" id="chk-speak-sel" onchange="App.setSpeakOnSelect(this.checked)"> on
-      </label>
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">lire chaque mot complet</span>
-      <label class="setting-val">
-        <input type="checkbox" id="chk-speak-word" onchange="App.setSpeakOnWord(this.checked)"> on
-      </label>
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">lire sur ponctuation</span>
-      <label class="setting-val">
-        <input type="checkbox" id="chk-speak-sent" onchange="App.setSpeakOnSentence(this.checked)"> on
-      </label>
-    </div>
-    <div class="setting-hint">"Lire chaque sélection" est le plus réactif (feedback immédiat sur chaque lettre/syllabe). Utile pour l'utilisateur qui pointe avec son pied.</div>
-
-    <div class="setting-section-title">Profils de calibration</div>
-    <div class="setting-row">
-      <button class="btn-ghost" onclick="Calibration.promptAndSaveProfile()">💾 Sauvegarder sous…</button>
-    </div>
-    <div id="profiles-list"></div>
-
-    <div class="setting-section-title">Prédiction IA</div>
-    <div class="setting-row">
-      <span class="setting-label">URL du proxy</span>
-      <input type="url" id="inp-proxy-url" placeholder="https://aac-predict.xxx.workers.dev" class="setting-input" oninput="Prediction.saveProxyUrl(this.value)">
-    </div>
-    <div class="setting-hint">Endpoint du Cloudflare Worker (voir <code>worker/README.md</code>). La clé API reste côté serveur.</div>
-    <div class="setting-row">
-      <span class="setting-label">prédiction active</span>
-      <label class="setting-val">
-        <input type="checkbox" id="chk-pred" checked onchange="Prediction.setEnabled(this.checked)"> on
-      </label>
-    </div>
-
-    <div class="setting-section-title">Calibration automatique</div>
-    <div class="setting-row">
-      <span class="setting-label" id="lbl-offset-learning">0/20 paires pied↔case</span>
-      <button class="btn-ghost" onclick="Calibration.resetOffsetLearning()">Réinitialiser</button>
-    </div>
-
-    <div class="setting-section-title">Scan audio</div>
-    <div class="setting-row">
-      <span class="setting-label">seuil son</span>
-      <input type="range" min="0.05" max="0.6" step="0.05" value="0.2" id="sl-audio-th" oninput="document.getElementById('val-audio-th').textContent=parseFloat(this.value).toFixed(2)">
-      <span class="setting-val" id="val-audio-th">0.20</span>
-    </div>
-    <div class="setting-row">
-      <span class="setting-label">rythme (s)</span>
-      <input type="range" min="0.6" max="3" step="0.2" value="1.4" id="sl-scan-rate" oninput="document.getElementById('val-scan-rate').textContent=parseFloat(this.value).toFixed(1)+'s'">
-      <span class="setting-val" id="val-scan-rate">1.4s</span>
+      <h3>Test et remise à zéro</h3>
+      <label>Tester avec une vidéo du téléphone
+        <input id="s-file" type="file" accept="video/*"></label>
+      <button id="s-camera" class="btn">📷 Revenir à la caméra</button>
+      <button id="s-reset" class="btn danger">Effacer la calibration</button>
     </div>
   </div>
 
-  <!-- Status + dwell -->
-  <div class="status-bar">
-    <div class="status-dot" id="main-dot"></div>
-    <span id="main-status">Mode manuel</span>
-  </div>
-  <div class="dwell-wrap" id="dwell-wrap">
-    <div id="dwell-bar"></div>
-  </div>
-
-  <!-- Camera live -->
-  <div id="camera-live-wrap">
-    <video id="video-live" autoplay playsinline muted></video>
-    <canvas id="canvas-live"></canvas>
-    <div id="foot-badge" class="foot-badge">
-      <div class="foot-badge-dot"></div>
-      <span id="foot-badge-text">cherche le pied</span>
-    </div>
-    <!-- Calibration inline pour vidéo chargée : affichage sur la MÊME
-         vidéo, paused, l'utilisateur tape 4 coins puis ▶ Démarrer -->
-    <div id="video-calib-overlay" style="display:none;">
-      <div class="vcalib-msg" id="vcalib-msg">👆 Touchez <b>HAUT-GAUCHE</b> du tableau</div>
-      <div class="vcalib-dots">
-        <div class="step-dot current" id="vcalib-dot-0"></div>
-        <div class="step-dot" id="vcalib-dot-1"></div>
-        <div class="step-dot" id="vcalib-dot-2"></div>
-        <div class="step-dot" id="vcalib-dot-3"></div>
-      </div>
-      <div class="vcalib-actions">
-        <button class="btn-secondary" id="vcalib-reset-btn" onclick="Camera.resetVideoCalib()">↺ Recommencer</button>
-        <button class="btn-primary" id="vcalib-play-btn" style="display:none;" onclick="Camera.beginVideoPlayback()">▶ Démarrer</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tableau -->
-  <div class="tb-wrap">
-  <div class="tb" id="tableau">
-
-    <!-- L0 -->
-    <div class="c num" style="grid-row:1;grid-column:1;">0</div>
-    <div class="c bl nc" style="grid-row:1;grid-column:2;"></div>
-    <div style="grid-row:1;grid-column:3;">
-      <div class="inn" style="grid-template-columns:76px 1fr 1fr 1fr;">
-        <div class="c wh fxxl" data-val="non " data-row="0" onclick="App.sel(this)">non</div>
-        <div class="c bl flg" data-val="est-ce que " data-row="0" onclick="App.sel(this)">est-ce que ?</div>
-        <div class="c bl flg" data-val="ça va " data-row="0" onclick="App.sel(this)">ça va</div>
-        <div class="c bl flg" data-val="il y a " data-row="0" onclick="App.sel(this)">il y a</div>
-      </div>
-    </div>
-    <div class="c wh fxl" style="grid-row:1/3;grid-column:4/6;" data-val="oui " data-row="0" onclick="App.sel(this)">oui</div>
-
-    <!-- L1 -->
-    <div class="c num" style="grid-row:2;grid-column:1;">1</div>
-    <div class="c bl fxs nc" style="grid-row:2/5;grid-column:2;font-size:9px;line-height:1.8;">s.<br>v.<br>p.</div>
-    <div style="grid-row:2;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(7,1fr);">
-        <div class="c yw fxl" data-val="p" data-row="1" onclick="App.sel(this)">p</div>
-        <div class="c yw fxl" data-val="t" data-row="1" onclick="App.sel(this)">t</div>
-        <div class="c yw flg" data-val="k" data-row="1" onclick="App.sel(this)">k<sub style="font-size:7px">qu</sub></div>
-        <div class="c yw fxl" data-val="r" data-row="1" onclick="App.sel(this)">r</div>
-        <div class="c yw flg" data-val="f" data-row="1" onclick="App.sel(this)"><sup style="font-size:7px">ph</sup>f</div>
-        <div class="c yw flg" data-val="s" data-row="1" onclick="App.sel(this)">s<sub style="font-size:7px">c</sub></div>
-        <div class="c yw fxl" data-val="ch" data-row="1" onclick="App.sel(this)">ch</div>
-      </div>
-    </div>
-    <div class="c yw fxl" style="grid-row:2;grid-column:4;" data-val="n" data-row="1" onclick="App.sel(this)">n</div>
-    <div class="c bl nc" style="grid-row:2;grid-column:5;"></div>
-
-    <!-- L2 -->
-    <div class="c num" style="grid-row:3;grid-column:1;">2</div>
-    <div style="grid-row:3;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(7,1fr);">
-        <div class="c yw fxl" data-val="b" data-row="2" onclick="App.sel(this)">b</div>
-        <div class="c yw fxl" data-val="d" data-row="2" onclick="App.sel(this)">d</div>
-        <div class="c yw flg" data-val="g" data-row="2" onclick="App.sel(this)">g<sub style="font-size:7px">gu</sub></div>
-        <div class="c yw fxl" data-val="l" data-row="2" onclick="App.sel(this)">l</div>
-        <div class="c yw fxl" data-val="v" data-row="2" onclick="App.sel(this)">v</div>
-        <div class="c yw fxl" data-val="z" data-row="2" onclick="App.sel(this)">z</div>
-        <div class="c yw flg" data-val="j" data-row="2" onclick="App.sel(this)">j<sub style="font-size:7px">ge</sub></div>
-      </div>
-    </div>
-    <div class="c yw fxl" style="grid-row:3/5;grid-column:4;" data-val="gn" data-row="2" onclick="App.sel(this)">gn</div>
-    <div class="c bl fmd" style="grid-row:3;grid-column:5;font-size:9px;" data-val="pardon " data-row="2" onclick="App.sel(this)">pardon</div>
-
-    <!-- L3 -->
-    <div class="c num" style="grid-row:4;grid-column:1;">3</div>
-    <div style="grid-row:4;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(7,1fr);">
-        <div class="c yw nc"></div><div class="c yw nc"></div><div class="c yw nc"></div>
-        <div class="c yw nc"></div><div class="c yw nc"></div><div class="c yw nc"></div>
-        <div class="c yw fxl" data-val="m" data-row="3" onclick="App.sel(this)">m</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:4;grid-column:5;"></div>
-
-    <!-- L4 -->
-    <div class="c num" style="grid-row:5;grid-column:1;">4</div>
-    <div class="c bl nc" style="grid-row:5;grid-column:2;"></div>
-    <div style="grid-row:5;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(6,1fr);">
-        <div class="c bl flg" data-val="vous " data-row="4" onclick="App.sel(this)">vous</div>
-        <div class="c bl flg" data-val="il " data-row="4" onclick="App.sel(this)">il</div>
-        <div class="c bl flg" data-val="je " data-row="4" onclick="App.sel(this)">je</div>
-        <div class="c bl flg" data-val="tu " data-row="4" onclick="App.sel(this)">tu</div>
-        <div class="c bl flg" data-val="elle " data-row="4" onclick="App.sel(this)">elle</div>
-        <div class="c bl flg" data-val="nous " data-row="4" onclick="App.sel(this)">nous</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:5;grid-column:4;"></div>
-    <div class="c bl nc" style="grid-row:5;grid-column:5;"></div>
-
-    <!-- L5 -->
-    <div class="c num" style="grid-row:6;grid-column:1;">5</div>
-    <div class="c bl fxs" style="grid-row:6;grid-column:2;font-size:9px;" data-val="merci " data-row="5" onclick="App.sel(this)">merci</div>
-    <div style="grid-row:6;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(6,1fr);">
-        <div class="c yw fxl" data-val="e" data-row="5" onclick="App.sel(this)">e</div>
-        <div class="c yw fxl" data-val="u" data-row="5" onclick="App.sel(this)">u</div>
-        <div class="c yw fxl" data-val="a" data-row="5" onclick="App.sel(this)">a</div>
-        <div class="c yw fxl" data-val="o" data-row="5" onclick="App.sel(this)">o</div>
-        <div class="c yw fxl" data-val="é" data-row="5" onclick="App.sel(this)">é</div>
-        <div class="c yw fxl" data-val="i" data-row="5" onclick="App.sel(this)">i</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:6;grid-column:4;"></div>
-    <div class="c bl fmd" style="grid-row:6;grid-column:5;font-size:9px;" data-val="salut " data-row="5" onclick="App.sel(this)">salut</div>
-
-    <!-- L6 -->
-    <div class="c num" style="grid-row:7;grid-column:1;">6</div>
-    <div class="c bl nc" style="grid-row:7;grid-column:2;"></div>
-    <div style="grid-row:7;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(6,1fr);">
-        <div class="c yw flg" data-val="oe" data-row="6" onclick="App.sel(this)">oe</div>
-        <div class="c yw flg" data-val="ou" data-row="6" onclick="App.sel(this)">ou</div>
-        <div class="c yw flg" data-val="an" data-row="6" onclick="App.sel(this)">an</div>
-        <div class="c yw flg" data-val="on" data-row="6" onclick="App.sel(this)">on</div>
-        <div class="c yw flg" data-val="è" data-row="6" onclick="App.sel(this)">è</div>
-        <div class="c yw flg" data-val="in" data-row="6" onclick="App.sel(this)">in</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:7;grid-column:4;"></div>
-    <div class="c bl nc" style="grid-row:7;grid-column:5;"></div>
-
-    <!-- L7 -->
-    <div class="c num" style="grid-row:8;grid-column:1;">7</div>
-    <div class="c bl nc" style="grid-row:8;grid-column:2;"></div>
-    <div class="c bl nc" style="grid-row:8;grid-column:3;"></div>
-    <div class="c bl nc" style="grid-row:8;grid-column:4;"></div>
-    <div class="c bl nc" style="grid-row:8;grid-column:5;"></div>
-
-    <!-- L8 -->
-    <div class="c num" style="grid-row:9;grid-column:1;">8</div>
-    <div class="c bl fxs" style="grid-row:9;grid-column:2;font-size:7px;padding:1px;" data-val="tu as compris ? " data-row="8" onclick="App.sel(this)">tu as<br>compris?</div>
-    <div style="grid-row:9;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(7,1fr);">
-        <div class="c yw flg" data-val="ieu" data-row="8" onclick="App.sel(this)">ieu</div>
-        <div class="c yw flg" data-val="ui" data-row="8" onclick="App.sel(this)">ui</div>
-        <div class="c yw flg" data-val="oi" data-row="8" onclick="App.sel(this)">oi</div>
-        <div class="c yw flg" data-val="ill" data-row="8" onclick="App.sel(this)">ill</div>
-        <div class="c yw flg" data-val="oin" data-row="8" onclick="App.sel(this)">oin</div>
-        <div class="c yw flg" data-val="un" data-row="8" onclick="App.sel(this)">un</div>
-        <div class="c yw flg" data-val="ien" data-row="8" onclick="App.sel(this)">ien</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:9;grid-column:4;"></div>
-    <div class="c bl fxs" style="grid-row:9/11;grid-column:5;font-size:8px;text-align:center;" data-val="au revoir " data-row="8" onclick="App.sel(this)">au<br>revoir</div>
-
-    <!-- L9 -->
-    <div class="c num" style="grid-row:10;grid-column:1;">9</div>
-    <div class="c bl nc" style="grid-row:10;grid-column:2;"></div>
-    <div style="grid-row:10;grid-column:3;">
-      <div class="inn" style="grid-template-columns:repeat(5,1fr);">
-        <div class="c bl flg" data-val="pourquoi " data-row="9" onclick="App.sel(this)">pourquoi</div>
-        <div class="c bl flg" data-val="quand " data-row="9" onclick="App.sel(this)">quand</div>
-        <div class="c bl flg" data-val="où " data-row="9" onclick="App.sel(this)">où</div>
-        <div class="c bl flg" data-val="comment " data-row="9" onclick="App.sel(this)">comment</div>
-        <div class="c bl flg" data-val="combien " data-row="9" onclick="App.sel(this)">combien</div>
-      </div>
-    </div>
-    <div class="c bl nc" style="grid-row:10;grid-column:4;"></div>
-
-  </div>
-  </div>
-
-</div>
-
-<!-- ══════════════════════════════════════
-     ÉCRAN : APPRENTISSAGE (supervisé sur vidéo)
-══════════════════════════════════════ -->
-<div id="screen-training" class="screen">
-  <div class="fav-header">
-    <button onclick="App.showScreen('home')" aria-label="Retour à l'accueil"><span aria-hidden="true">←</span></button>
-    <h2><span aria-hidden="true">🧠</span> Apprentissage</h2>
-  </div>
-  <div class="training-body">
-    <div class="training-step">
-      <div class="training-step-title">1. Charger une vidéo test</div>
-      <button class="btn-secondary" onclick="App.pickTrainingFile()">🎬 Choisir une vidéo</button>
-      <div class="setting-hint" id="training-file-status">Aucune vidéo chargée</div>
-    </div>
-
-    <div class="training-step">
-      <div class="training-step-title">2. Calibration des 4 coins</div>
-      <div class="setting-hint" id="training-calib-status">Vérification…</div>
-      <button class="btn-primary" id="training-calib-btn" onclick="App.startTrainingCalibration()" style="display:none">🎯 Calibrer sur cette vidéo</button>
-      <div class="setting-hint">Recommandé : calibrer directement sur la vidéo chargée est plus précis qu'une calibration faite avec un autre cadrage.</div>
-    </div>
-
-    <div class="training-step">
-      <div class="training-step-title">3. Texte attendu (ce que la personne a écrit dans la vidéo)</div>
-      <textarea id="training-target" class="setting-input" rows="4" placeholder="Ex: bonjour comment ça va"></textarea>
-    </div>
-
-    <div class="training-step">
-      <button class="btn-primary" id="training-start-btn" onclick="App.startTraining()">🧠 Lancer l'apprentissage</button>
-    </div>
-
-    <div class="training-step" id="training-progress-wrap" style="display:none">
-      <div class="training-step-title">Analyse en cours</div>
-      <div class="training-progress-bar"><div id="training-progress-fill"></div></div>
-      <div class="setting-hint" id="training-status-text">Initialisation…</div>
-    </div>
-
-    <div class="training-step" id="training-results" style="display:none">
-      <div class="training-step-title">Résultats</div>
-      <div class="training-kpi" id="training-accuracy">—</div>
-      <div class="training-transcripts">
-        <div><b>Obtenu :</b> <span id="training-got"></span></div>
-        <div><b>Attendu :</b> <span id="training-want"></span></div>
-      </div>
-      <div class="training-params" id="training-params"></div>
-      <button class="btn-primary" onclick="App.applyTraining()">✓ Appliquer ces paramètres</button>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════
-     ÉCRAN : TRANSCRIPTION (résultat vidéo)
-══════════════════════════════════════ -->
-<div id="screen-transcript" class="screen">
-  <div class="fav-header">
-    <button onclick="App.closeTranscript()" aria-label="Fermer la transcription"><span aria-hidden="true">←</span></button>
-    <h2><span aria-hidden="true">📝</span> Transcription</h2>
-  </div>
-  <div class="transcript-body">
-    <div class="transcript-meta" id="transcript-meta"></div>
-    <div class="transcript-text" id="transcript-text">(rien)</div>
-  </div>
-  <div class="transcript-actions">
-    <button class="btn-secondary" onclick="App.copyTranscript()">📋 Copier</button>
-    <button class="btn-secondary" onclick="App.replayVideo()">⏮ Relancer</button>
-    <button class="btn-primary" onclick="App.speakTranscript()">▶ Lire à voix haute</button>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════
-     ÉCRAN : FAVORIS
-══════════════════════════════════════ -->
-<div id="screen-favorites" class="screen">
-  <div class="fav-header">
-    <button onclick="App.showScreen('main')" aria-label="Retour au tableau"><span aria-hidden="true">←</span></button>
-    <h2><span aria-hidden="true">★</span> Favoris & historique</h2>
-  </div>
-  <div class="fav-list" id="fav-list"></div>
-</div>
-
-<!-- MediaPipe Pose (chargé uniquement si besoin) -->
-<script>
-  // Service worker registration (offline) + auto-update
-  if ('serviceWorker' in navigator) {
-    // Recharge la page quand un nouveau SW prend la main (évite d'afficher l'ancienne version en cache)
-    let reloadingOnce = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloadingOnce) return;
-      reloadingOnce = true;
-      console.log('[sw] controllerchange → reloading');
-      window.location.reload();
-    });
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-        .then((reg) => {
-          console.log('[sw] registered, scope:', reg.scope);
-          reg.update().catch(() => {});
-        })
-        .catch((err) => console.warn('[sw] register failed:', err));
-    });
-  }
-</script>
-
-<script src="js/tableau.js"></script>
-<script src="js/videosource.js"></script>
-<script src="js/history.js"></script>
-<script src="js/prediction.js"></script>
-<script src="js/calibration.js"></script>
-<script src="js/camera.js"></script>
-<script src="js/scan.js"></script>
-<script src="js/training.js"></script>
-<script src="js/app.js"></script>
+  <script src="js/board.js?v=2"></script>
+  <script src="js/vision.js?v=2"></script>
+  <script src="js/ia.js?v=2"></script>
+  <script src="js/app.js?v=2"></script>
+  <script>
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+  </script>
 </body>
 </html>

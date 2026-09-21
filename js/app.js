@@ -1,485 +1,449 @@
-// ═══════════════════════════════════════════
-// APP — navigation, texte, voix, mode
-// ═══════════════════════════════════════════
-window.App = (function() {
-  let txt = '';
-  let currentMode = 'manual';
-  let lastStatus = { color: '', text: 'Mode manuel' };
+// ═══════════════════════════════════════════════════════════════
+// APP — écran, calibration, sélection par maintien (dwell), phrase, voix
+// ═══════════════════════════════════════════════════════════════
+window.App = (function () {
 
-  // Auto-speak settings (persistés en localStorage)
-  const SPEAK_SELECT_KEY = 'aac_speak_on_select';
-  const SPEAK_WORD_KEY = 'aac_speak_on_word';
-  const SPEAK_SENTENCE_KEY = 'aac_speak_on_sentence';
+  const $ = id => document.getElementById(id);
 
-  function getSetting(key, defaultVal) {
-    const v = localStorage.getItem(key);
-    if (v === null) return defaultVal;
-    return v === '1';
-  }
-  function setSetting(key, val) {
-    localStorage.setItem(key, val ? '1' : '0');
-  }
-  function getSpeakOnSelect() { return getSetting(SPEAK_SELECT_KEY, true); }
-  function getSpeakOnWord() { return getSetting(SPEAK_WORD_KEY, false); }
-  function getSpeakOnSentence() { return getSetting(SPEAK_SENTENCE_KEY, false); }
-
-  function getText() { return txt; }
-  function setText(v) { txt = v; render(); Prediction.scheduleSuggest(); }
-
-  function render() {
-    const outEl = document.getElementById('output-text');
-    if (!outEl) return;
-    if (txt) outEl.innerHTML = `<span>${escapeHtml(txt)}</span>`;
-    else outEl.innerHTML = `<span class="output-placeholder">Composez...</span>`;
-    outEl.onclick = null;
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
-  }
-
-  /** Sélection d'une case — depuis clic manuel ou dwell caméra */
-  function sel(el, opts) {
-    if (!el || !el.dataset || !el.dataset.val) return;
-    flash(el);
-    const val = el.dataset.val;
-    const prevTxt = txt;
-    txt += val;
-    render();
-    Prediction.scheduleSuggest();
-
-    // ═══ Auto-speak : feedback vocal immédiat ═══
-    // 1) Lire la case sélectionnée (chaque lettre / syllabe / mot)
-    if (getSpeakOnSelect()) {
-      speakSnippet(val.trim() || val);
-    }
-    // 2) Lire le dernier mot complet (si la sélection se termine par un espace)
-    if (getSpeakOnWord() && /\s$/.test(val)) {
-      const words = prevTxt.trim().split(/\s+/).concat(val.trim());
-      const lastWord = words[words.length - 1];
-      if (lastWord && lastWord.length > 1) speakSnippet(lastWord);
-    }
-    // 3) Lire la phrase entière sur ponctuation finale
-    if (getSpeakOnSentence() && /[.!?]\s*$/.test(txt)) {
-      speakSnippet(txt.trim());
-    }
-
-    // Apprentissage offset : si sélection manuelle (pas via caméra) et caméra active,
-    // enregistrer la paire (pied détecté ↔ case cliquée).
-    if (!opts || !opts.fromCamera) {
-      if (currentMode === 'camera' && Camera && Camera.getLastFootUVBoard) {
-        const foot = Camera.getLastFootUVBoard();
-        if (foot) {
-          const cellCenter = Camera.cellCenterUV(el);
-          if (cellCenter) Calibration.recordPair(foot, cellCenter);
-        }
-      }
-    }
-  }
-
-  /** Prononce un snippet court (lettre, syllabe, mot, phrase) immédiatement.
-   *  Ne touche pas à la file principale de lecture : ce sont des feedbacks
-   *  courts qui remplacent l'éventuelle lecture précédente. */
-  function speakSnippet(text) {
-    if (!text) return;
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'fr-FR';
-      const slider = document.getElementById('sl-speed');
-      u.rate = slider ? parseFloat(slider.value) : 0.9;
-      u.volume = 1;
-      speechSynthesis.speak(u);
-    } catch (e) { console.warn('[speak] snippet failed', e); }
-  }
-
-  function add(v) { txt += v; render(); Prediction.scheduleSuggest(); }
-
-  function back() {
-    // Retire le dernier mot/segment (jusqu'au séparateur précédent)
-    if (!txt) return;
-    // Retire les espaces de fin puis la dernière séquence non-espace
-    const trimmed = txt.replace(/\s+$/, '');
-    const m = trimmed.match(/^(.*?)(\S+)$/);
-    txt = m ? m[1] : '';
-    render();
-    Prediction.scheduleSuggest();
-  }
-
-  function clearAll() { txt = ''; render(); Prediction.scheduleSuggest(); }
-
-  function speak() {
-    if (!txt.trim()) return;
-    const u = new SpeechSynthesisUtterance(txt.trim());
-    u.lang = 'fr-FR';
-    u.rate = parseFloat(document.getElementById('sl-speed').value);
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
-    // Enregistrer dans historique
-    Favorites.record(txt);
-  }
-
-  function flash(el) {
-    el.classList.add('c-selected');
-    setTimeout(() => el.classList.remove('c-selected'), 500);
-  }
-
-  function flashPredChip(el) {
-    el.classList.add('c-selected');
-    setTimeout(() => el.classList.remove('c-selected'), 400);
-  }
-
-  // ═══════════════════════════════════════════
-  // NAVIGATION
-  // ═══════════════════════════════════════════
-  function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    const el = document.getElementById('screen-' + id);
-    if (el) el.classList.add('active');
-    if (id === 'training') refreshTrainingScreen();
-  }
-
-  function goCalib() {
-    showScreen('calib');
-    Calibration.reset();
-    Calibration.startCam();
-  }
-
-  function goMain(mode) {
-    showScreen('main');
-    setMode(mode || 'manual');
-  }
-
-  // ═══════════════════════════════════════════
-  // ANALYSE D'UNE VIDÉO PRÉ-ENREGISTRÉE
-  // ═══════════════════════════════════════════
-  function pickVideoFile() {
-    const inp = document.getElementById('video-file-input');
-    if (inp) inp.click();
-  }
-
-  function onVideoFileSelected(e) {
-    const file = e && e.target && e.target.files && e.target.files[0];
-    if (!file) return;
-    if (!window.VideoSource) return;
-    VideoSource.set(file);
-    clearAll();
-    // Invalider l'ancienne calibration : chaque nouvelle vidéo chargée
-    // doit être re-calibrée pour que les coins collent à SON tableau.
-    if (window.Calibration) {
-      if (Calibration.stopTracking) Calibration.stopTracking();
-      if (Calibration.reset) Calibration.reset();
-      try { localStorage.removeItem('calibPoints'); } catch (err) {}
-    }
-    setStatus('blue', `Vidéo "${VideoSource.name()}" chargée — touchez les 4 coins du tableau`);
-    // Flux unifié : on va DIRECTEMENT au mode caméra principal.
-    //   - La vidéo se charge dans video-live, pause sur une frame.
-    //   - L'utilisateur tape les 4 coins sur la frame paused.
-    //   - Puis ▶ Démarrer : même vidéo, même élément, templates capturés
-    //     sur la frame exacte de calibration → le tracking suit le tableau.
-    goMain('camera');
-    // Reset l'input pour pouvoir re-sélectionner le même fichier plus tard
-    e.target.value = '';
-  }
-
-  /** Relance la vidéo depuis le début (sans recharger) */
-  function replayVideo() {
-    if (!window.VideoSource || !VideoSource.has()) return;
-    if (VideoSource.resetTranscript) VideoSource.resetTranscript();
-    clearAll();
-    goMain('camera');
-  }
-
-  /** Appelée par Camera quand la vidéo chargée se termine */
-  function showTranscriptResult() {
-    const metaEl = document.getElementById('transcript-meta');
-    const textEl = document.getElementById('transcript-text');
-    if (metaEl) {
-      const name = (window.VideoSource && VideoSource.has()) ? VideoSource.name() : '';
-      metaEl.textContent = name ? `Source : ${name}` : '';
-    }
-    if (textEl) {
-      const t = txt.trim();
-      textEl.textContent = t || '(aucun texte détecté — vérifie la calibration et le seuil de dwell)';
-    }
-    showScreen('transcript');
-    // Stopper le mode caméra (la vidéo est déjà finie)
-    if (currentMode === 'camera') {
-      currentMode = 'manual';
-      if (window.Camera) Camera.stop();
-    }
-  }
-
-  function closeTranscript() {
-    // Retour à l'accueil et clear de la vidéo
-    if (window.VideoSource) VideoSource.clear();
-    showScreen('home');
-  }
-
-  function copyTranscript() {
-    const text = (txt || '').trim();
-    if (!text) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text)
-        .then(() => setStatus('blue', '✓ Copié dans le presse-papier'))
-        .catch(() => setStatus('orange', 'Copie échouée'));
-    }
-  }
-
-  function speakTranscript() {
-    speak();
-  }
-
-  // ═══════════════════════════════════════════
-  // APPRENTISSAGE SUPERVISÉ (Training)
-  // ═══════════════════════════════════════════
-  let lastTrainingResult = null;
-
-  function pickTrainingFile() {
-    const inp = document.getElementById('training-file-input');
-    if (inp) inp.click();
-  }
-
-  function onTrainingFileSelected(e) {
-    const file = e && e.target && e.target.files && e.target.files[0];
-    if (!file) return;
-    if (!window.VideoSource) return;
-    VideoSource.set(file);
-    const status = document.getElementById('training-file-status');
-    if (status) status.textContent = `✓ ${file.name}`;
-    e.target.value = '';
-  }
-
-  function refreshTrainingScreen() {
-    const hasVideo = !!(window.VideoSource && VideoSource.has());
-    const isCalib = Calibration.isCalibrated();
-
-    const calibStatus = document.getElementById('training-calib-status');
-    if (calibStatus) {
-      if (isCalib) {
-        calibStatus.innerHTML = '<span style="color:var(--green)">✓ Calibration présente (' +
-          (Calibration.getActiveProfileName && Calibration.getActiveProfileName() || 'défaut') +
-          ')</span>';
-      } else {
-        calibStatus.innerHTML = '<span style="color:var(--orange)">⚠ Pas encore calibré</span>';
-      }
-    }
-
-    // Le bouton "🎯 Calibrer sur cette vidéo" ne s'affiche que si une vidéo est chargée
-    const calibBtn = document.getElementById('training-calib-btn');
-    if (calibBtn) {
-      calibBtn.style.display = hasVideo ? '' : 'none';
-      calibBtn.textContent = isCalib ? '🎯 Re-calibrer sur cette vidéo' : '🎯 Calibrer sur cette vidéo';
-    }
-
-    const fileStatus = document.getElementById('training-file-status');
-    if (fileStatus) {
-      if (hasVideo) {
-        fileStatus.textContent = `✓ ${VideoSource.name()}`;
-      } else {
-        fileStatus.textContent = 'Aucune vidéo chargée';
-      }
-    }
-
-    // Masquer les anciens résultats
-    const res = document.getElementById('training-results');
-    if (res) res.style.display = 'none';
-    const prog = document.getElementById('training-progress-wrap');
-    if (prog) prog.style.display = 'none';
-  }
-
-  /** Démarre la calibration en utilisant la vidéo chargée comme source.
-   *  Après "Utiliser →", revient sur l'écran training au lieu de main. */
-  function startTrainingCalibration() {
-    if (!window.VideoSource || !VideoSource.has()) {
-      alert('Charge d\'abord une vidéo.');
-      return;
-    }
-    if (Calibration.setReturnToOnce) Calibration.setReturnToOnce('training');
-    showScreen('calib');
-    Calibration.reset();
-    Calibration.startCam();
-  }
-
-  async function startTraining() {
-    if (!window.VideoSource || !VideoSource.has()) {
-      alert('Charge d\'abord une vidéo test.');
-      return;
-    }
-    if (!Calibration.isCalibrated()) {
-      alert('Calibre d\'abord les 4 coins du tableau.\n\nTouche "🎯 Calibrer sur cette vidéo" pour faire la calibration directement sur la vidéo chargée (plus précis).');
-      return;
-    }
-    const targetEl = document.getElementById('training-target');
-    const target = (targetEl && targetEl.value || '').trim();
-    if (!target) {
-      alert('Tape le texte attendu (ce que la personne a écrit dans la vidéo).');
-      return;
-    }
-    if (!window.Training) {
-      alert('Module Training non chargé.');
-      return;
-    }
-
-    const progWrap = document.getElementById('training-progress-wrap');
-    const progFill = document.getElementById('training-progress-fill');
-    const statusText = document.getElementById('training-status-text');
-    const resultsWrap = document.getElementById('training-results');
-    const startBtn = document.getElementById('training-start-btn');
-
-    if (progWrap) progWrap.style.display = '';
-    if (resultsWrap) resultsWrap.style.display = 'none';
-    if (startBtn) { startBtn.disabled = true; startBtn.textContent = '⏳ En cours…'; }
-
-    try {
-      // Phase 1 : enregistrer la trace en jouant la vidéo
-      if (statusText) statusText.textContent = 'Phase 1/2 — capture de la trace (lecture vidéo)…';
-      if (progFill) progFill.style.width = '0%';
-
-      showScreen('main'); // la vidéo doit être dans #video-live (mode caméra)
-      const trace = await Training.collectTrace((pct) => {
-        if (progFill) progFill.style.width = (pct * 50) + '%';
-      });
-      Camera.stop();
-      showScreen('training');
-
-      if (!trace || trace.length === 0) {
-        if (statusText) statusText.innerHTML = '<span style="color:var(--red)">❌ Aucune détection du pied pendant la vidéo. Vérifie la calibration et le mode source caméra dans ⚙.</span>';
-        if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
-        return;
-      }
-
-      if (statusText) statusText.textContent = `Phase 2/2 — grid search (${trace.length} points capturés)…`;
-
-      // Phase 2 : grid search
-      const best = await Training.gridSearch(trace, target, (pct) => {
-        if (progFill) progFill.style.width = (50 + pct * 50) + '%';
-      });
-
-      if (best.err) {
-        if (statusText) statusText.innerHTML = `<span style="color:var(--red)">❌ ${best.err}</span>`;
-        if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
-        return;
-      }
-
-      lastTrainingResult = best;
-
-      // Afficher résultats
-      if (progFill) progFill.style.width = '100%';
-      if (statusText) statusText.textContent = '✓ Apprentissage terminé';
-
-      const accuracy = Math.max(0, Math.round((1 - best.dist) * 100));
-      const accEl = document.getElementById('training-accuracy');
-      if (accEl) accEl.textContent = accuracy + '% de précision';
-      const gotEl = document.getElementById('training-got');
-      if (gotEl) gotEl.textContent = best.transcript || '(vide)';
-      const wantEl = document.getElementById('training-want');
-      if (wantEl) wantEl.textContent = target;
-      const paramsEl = document.getElementById('training-params');
-      if (paramsEl) {
-        paramsEl.textContent =
-          `offset vertical: ${best.offsetRows.toFixed(2)} lignes
-offset horizontal: ${best.offsetU.toFixed(3)}
-dwell: ${best.dwellMs} ms
-points capturés: ${trace.length}`;
-      }
-
-      if (resultsWrap) resultsWrap.style.display = '';
-      if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
-
-    } catch (e) {
-      console.error('[training] error', e);
-      if (statusText) statusText.innerHTML = `<span style="color:var(--red)">❌ Erreur : ${e.message}</span>`;
-      if (startBtn) { startBtn.disabled = false; startBtn.textContent = '🧠 Relancer'; }
-    }
-  }
-
-  function applyTraining() {
-    if (!lastTrainingResult || !window.Training) return;
-    Training.apply(lastTrainingResult);
-    setStatus('blue', '✓ Paramètres d\'apprentissage appliqués');
-    setTimeout(() => showScreen('home'), 400);
-  }
-
-  // ═══════════════════════════════════════════
-  // MODE (manuel / caméra / scan)
-  // ═══════════════════════════════════════════
-  function setMode(m) {
-    // Cleanup de l'ancien mode
-    if (currentMode === 'camera' && m !== 'camera') Camera.stop();
-    if (currentMode === 'scan' && m !== 'scan') Scan.stop();
-
-    currentMode = m;
-    document.getElementById('btn-manual').classList.toggle('active', m === 'manual');
-    document.getElementById('btn-camera').classList.toggle('active', m === 'camera');
-    document.getElementById('btn-scan').classList.toggle('active', m === 'scan');
-
-    if (m === 'camera') {
-      Camera.start();
-    } else if (m === 'scan') {
-      Scan.start();
-    } else {
-      setStatus('', 'Mode manuel');
-    }
-  }
-
-  // ═══════════════════════════════════════════
-  // STATUS
-  // ═══════════════════════════════════════════
-  function setStatus(color, text) {
-    lastStatus = { color, text };
-    const dot = document.getElementById('main-dot');
-    if (dot) dot.className = 'status-dot' + (color ? ' ' + color : '');
-    const s = document.getElementById('main-status');
-    if (s) s.textContent = text;
-  }
-  function refreshStatus() { setStatus(lastStatus.color, lastStatus.text); }
-
-  // ═══════════════════════════════════════════
-  // SETTINGS
-  // ═══════════════════════════════════════════
-  function toggleSettings() {
-    document.getElementById('settings-panel').classList.toggle('open');
-  }
-
-  // ═══════════════════════════════════════════
-  // INIT
-  // ═══════════════════════════════════════════
-  function init() {
-    Calibration.load();
-    Calibration.initLabel();
-    Prediction.init();
-    // Initialiser les toggles de voix depuis localStorage
-    const c1 = document.getElementById('chk-speak-sel');
-    if (c1) c1.checked = getSpeakOnSelect();
-    const c2 = document.getElementById('chk-speak-word');
-    if (c2) c2.checked = getSpeakOnWord();
-    const c3 = document.getElementById('chk-speak-sent');
-    if (c3) c3.checked = getSpeakOnSentence();
-    // Initialiser le select de source caméra
-    const sc = document.getElementById('sl-cam-source');
-    if (sc && window.Camera && Camera.getSource) sc.value = Camera.getSource();
-    // Afficher la liste des profils de calibration
-    if (Calibration.renderProfilesUI) Calibration.renderProfilesUI();
-    // Charger les paramètres d'apprentissage sauvegardés (s'il y en a)
-    if (window.Training && Training.loadSavedOnStartup) Training.loadSavedOnStartup();
-    render();
-  }
-
-  window.addEventListener('load', init);
-
-  return {
-    getText, setText, sel, add, back, clearAll, speak,
-    showScreen, goCalib, goMain, setMode, toggleSettings,
-    setStatus, refreshStatus, flashPredChip,
-    getSpeakOnSelect, getSpeakOnWord, getSpeakOnSentence,
-    setSpeakOnSelect: (v) => setSetting(SPEAK_SELECT_KEY, v),
-    setSpeakOnWord: (v) => setSetting(SPEAK_WORD_KEY, v),
-    setSpeakOnSentence: (v) => setSetting(SPEAK_SENTENCE_KEY, v),
-    speakSnippet,
-    pickVideoFile, onVideoFileSelected, replayVideo,
-    showTranscriptResult, closeTranscript, copyTranscript, speakTranscript,
-    pickTrainingFile, onTrainingFileSelected, startTraining, applyTraining,
-    startTrainingCalibration
+  // ── Réglages (sauvegardés sur le téléphone) ──
+  const DEFAULTS = {
+    dwell: 1.2,          // secondes de maintien pour valider une case
+    threshold: 40,       // sensibilité (différence de couleur)
+    entry: 'bottom',     // côté par lequel le pied arrive sur le tableau
+    offset: 0,           // décalage de la pointe
+    adapt: true,         // référence qui suit la lumière
+    showMask: true,      // afficher la zone détectée
+    announce: true,      // dire chaque case à voix haute
+    autoIA: true,        // reconstitution automatique
+    nonErases: true      // "non" efface la dernière case
   };
+  let S = Object.assign({}, DEFAULTS);
+  try { Object.assign(S, JSON.parse(localStorage.getItem('aac_settings') || '{}')); } catch (e) { }
+  function saveSettings() { try { localStorage.setItem('aac_settings', JSON.stringify(S)); } catch (e) { } }
+
+  // ── État ──
+  const video = $('video');
+  const overlay = $('overlay');
+  const octx = overlay.getContext('2d');
+  let stream = null;
+  let usingFile = false;
+  let calibrating = false;
+  let corners = null;          // [{x,y}] normalisés 0..1 (HG, HD, BD, BG)
+  let mapFn = null;            // (u,v) tableau → (x,y) vidéo
+  const seq = [];              // cases sélectionnées
+  let phrase = '';
+  let lastSelectionAt = 0;
+  let iaTimer = null;
+  let running = false;
+
+  // Sélection par maintien
+  const hist = [];             // dernières cases candidates
+  let hoverCell = null, hoverSince = 0, armed = true, absentSince = 0;
+
+  try { corners = JSON.parse(localStorage.getItem('aac_corners') || 'null'); } catch (e) { }
+
+  // ═════════ Caméra ═════════
+  async function startCamera() {
+    stopVideoSource();
+    usingFile = false;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      setStatus('Caméra active');
+    } catch (e) {
+      setStatus('Caméra refusée : ' + e.message, true);
+    }
+  }
+
+  function stopVideoSource() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (usingFile && video.src) { URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
+    video.srcObject = null;
+  }
+
+  function useVideoFile(file) {
+    stopVideoSource();
+    usingFile = true;
+    video.src = URL.createObjectURL(file);
+    video.loop = true;
+    video.play().catch(() => { });
+    setStatus('Vidéo de test : ' + file.name);
+    closeSettings();
+  }
+
+  video.addEventListener('loadedmetadata', () => {
+    const box = $('cambox');
+    box.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    requestAnimationFrame(resizeOverlay);
+  });
+
+  function resizeOverlay() {
+    const box = $('cambox');
+    overlay.width = box.clientWidth * (window.devicePixelRatio || 1);
+    overlay.height = box.clientHeight * (window.devicePixelRatio || 1);
+    overlay.style.width = box.clientWidth + 'px';
+    overlay.style.height = box.clientHeight + 'px';
+    placeHandles();
+  }
+  window.addEventListener('resize', resizeOverlay);
+
+  // ═════════ Calibration ═════════
+  function startCalibration() {
+    calibrating = true;
+    running = false;
+    if (!corners) corners = [{ x: 0.15, y: 0.15 }, { x: 0.85, y: 0.15 }, { x: 0.85, y: 0.85 }, { x: 0.15, y: 0.85 }];
+    $('calibbar').classList.remove('hidden');
+    $('handles').classList.remove('hidden');
+    placeHandles();
+    unlockAudio();
+    setStatus('Placez les 4 points sur les coins du tableau (le pied hors du tableau)');
+  }
+
+  function placeHandles() {
+    if (!corners) return;
+    const box = $('cambox');
+    document.querySelectorAll('.handle').forEach((h, i) => {
+      h.style.left = (corners[i].x * box.clientWidth) + 'px';
+      h.style.top = (corners[i].y * box.clientHeight) + 'px';
+    });
+    if (calibrating) drawOverlay(null);
+  }
+
+  function initHandles() {
+    const box = $('cambox');
+    document.querySelectorAll('.handle').forEach((h, i) => {
+      let dragging = false;
+      h.addEventListener('pointerdown', e => { dragging = true; h.setPointerCapture(e.pointerId); e.preventDefault(); });
+      h.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        const r = box.getBoundingClientRect();
+        corners[i] = {
+          x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+          y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+        };
+        placeHandles();
+      });
+      h.addEventListener('pointerup', () => { dragging = false; });
+      h.addEventListener('pointercancel', () => { dragging = false; });
+    });
+  }
+
+  function validateCalibration() {
+    Vision.setCorners(corners);
+    mapFn = Vision.squareToQuad(corners);
+    try { localStorage.setItem('aac_corners', JSON.stringify(corners)); } catch (e) { }
+    calibrating = false;
+    $('calibbar').classList.add('hidden');
+    $('handles').classList.add('hidden');
+    captureReference();
+    running = true;
+  }
+
+  function cancelCalibration() {
+    calibrating = false;
+    $('calibbar').classList.add('hidden');
+    $('handles').classList.add('hidden');
+    try { corners = JSON.parse(localStorage.getItem('aac_corners') || 'null'); } catch (e) { }
+    if (corners) { Vision.setCorners(corners); mapFn = Vision.squareToQuad(corners); }
+    running = !!mapFn;
+  }
+
+  function captureReference() {
+    if (!mapFn) { setStatus('Calibrez d’abord le tableau', true); return; }
+    if (video.readyState < 2) { setStatus('Vidéo pas encore prête', true); return; }
+    Vision.captureReference(video);
+    setStatus('Référence prise : le tableau vide est mémorisé');
+    resetHover();
+  }
+
+  // ═════════ Boucle d’analyse ═════════
+  let lastT = 0;
+  function loop(t) {
+    requestAnimationFrame(loop);
+    if (t - lastT < 60) return;       // ~16 images / seconde
+    lastT = t;
+    if (calibrating) { drawOverlay(null); return; }
+    if (!running || !mapFn || !Vision.hasReference() || video.readyState < 2 || video.paused) return;
+    const r = Vision.analyze(video, { threshold: S.threshold, entry: S.entry, offset: S.offset, adapt: S.adapt });
+    let cell = null;
+    if (r.present) cell = Board.cellAt(r.u, r.v);
+    updateDwell(cell, r.present, t);
+    drawOverlay(r);
+  }
+
+  function resetHover() { hist.length = 0; hoverCell = null; hoverSince = 0; armed = true; }
+
+  function updateDwell(cell, present, t) {
+    // Lissage : case majoritaire sur les 6 dernières images
+    hist.push(cell ? cell.id : -1);
+    if (hist.length > 6) hist.shift();
+    const counts = {};
+    let bestId = -1, bestN = 0;
+    for (const id of hist) { counts[id] = (counts[id] || 0) + 1; if (counts[id] > bestN) { bestN = counts[id]; bestId = id; } }
+    const stable = bestId >= 0 ? Board.cells[bestId] : null;
+
+    if (!present) {
+      if (!absentSince) absentSince = t;
+      if (t - absentSince > 400) { armed = true; hoverCell = null; hoverSince = 0; }
+    } else absentSince = 0;
+
+    if (stable !== hoverCell) {
+      hoverCell = stable;
+      hoverSince = t;
+      armed = true;
+    }
+    let progress = 0;
+    if (hoverCell && armed) {
+      progress = Math.min(1, (t - hoverSince) / (S.dwell * 1000));
+      if (progress >= 1) { select(hoverCell); armed = false; }
+    }
+    showHover(hoverCell, armed ? progress : 1);
+  }
+
+  // ═════════ Sélection, phrase, voix ═════════
+  function select(cell) {
+    if (cell.kind === 'non' && S.nonErases && seq.length) {
+      seq.pop();
+      beep(300);
+      if (S.announce) speak('effacé');
+    } else {
+      seq.push(cell);
+      beep(880);
+      if (S.announce) speak(cell.value);
+    }
+    lastSelectionAt = Date.now();
+    phrase = '';
+    renderSeq();
+    flashMini(cell);
+    scheduleIA();
+  }
+
+  function addManual(cell) { unlockAudio(); select(cell); }
+
+  function eraseLast() { seq.pop(); phrase = ''; renderSeq(); scheduleIA(); }
+  function eraseAll() { seq.length = 0; phrase = ''; $('alts').innerHTML = ''; renderSeq(); }
+
+  function renderSeq() {
+    const el = $('seq');
+    el.innerHTML = '';
+    seq.forEach(c => {
+      const chip = document.createElement('span');
+      chip.className = 'chip ' + c.kind;
+      chip.textContent = c.label;
+      el.appendChild(chip);
+    });
+    el.scrollLeft = el.scrollWidth;
+    $('phrase').textContent = phrase || IA.naive(seq) || '…';
+    $('phrase').classList.toggle('raw', !phrase);
+  }
+
+  function scheduleIA() {
+    clearTimeout(iaTimer);
+    if (!S.autoIA || !IA.getKey() || !seq.length) return;
+    iaTimer = setTimeout(() => runIA(), 2500);
+  }
+
+  async function runIA() {
+    if (!seq.length) return;
+    const btn = $('btn-ia');
+    btn.disabled = true; btn.textContent = '… IA en cours';
+    try {
+      const r = await IA.reconstruct(seq.slice());
+      phrase = r.phrase;
+      $('phrase').textContent = phrase;
+      $('phrase').classList.remove('raw');
+      const alts = $('alts');
+      alts.innerHTML = '';
+      r.alternatives.forEach(a => {
+        const b = document.createElement('button');
+        b.className = 'alt'; b.textContent = a;
+        b.onclick = () => { phrase = a; $('phrase').textContent = a; };
+        alts.appendChild(b);
+      });
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = '✨ Reconstituer';
+    }
+  }
+
+  function readAloud() {
+    unlockAudio();
+    const txt = phrase || IA.naive(seq);
+    if (txt) speak(txt);
+  }
+
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR'; u.rate = 0.95;
+    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('fr'));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  }
+
+  let actx = null;
+  function unlockAudio() {
+    try {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      if ('speechSynthesis' in window) speechSynthesis.getVoices();
+    } catch (e) { }
+  }
+  function beep(freq) {
+    if (!actx) return;
+    try {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = freq; o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(0.2, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.15);
+      o.start(); o.stop(actx.currentTime + 0.15);
+    } catch (e) { }
+  }
+
+  // ═════════ Affichage ═════════
+  function setStatus(msg, isError) {
+    const el = $('status');
+    el.textContent = msg;
+    el.classList.toggle('err', !!isError);
+  }
+
+  function showHover(cell, progress) {
+    const el = $('hover');
+    const bar = $('hoverbar');
+    if (!cell) { el.textContent = 'Pied hors du tableau'; bar.style.width = '0%'; }
+    else { el.textContent = cell.label; bar.style.width = Math.round(progress * 100) + '%'; }
+    document.querySelectorAll('#mini .mc').forEach(m => m.classList.toggle('hov', !!cell && +m.dataset.id === cell.id));
+  }
+
+  function drawOverlay(r) {
+    const w = overlay.width, h = overlay.height;
+    octx.clearRect(0, 0, w, h);
+    const c = corners;
+    if (!c) return;
+    const map = calibrating ? Vision.squareToQuad(c) : mapFn;
+    if (!map) return;
+    const P = (u, v) => { const q = map(u, v); return [q.x * w, q.y * h]; };
+
+    // Zone détectée
+    if (r && r.mask && S.showMask) {
+      octx.fillStyle = 'rgba(255,80,0,0.45)';
+      const W = Vision.W, H = Vision.H;
+      for (let j = 0; j < H; j += 2) for (let i = 0; i < W; i += 2) {
+        if (!r.mask[j * W + i]) continue;
+        const [x, y] = P((i + 1) / W, (j + 1) / H);
+        octx.fillRect(x - 2, y - 2, 4, 4);
+      }
+    }
+    // Grille des cases
+    octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.55)';
+    for (const cell of Board.cells) {
+      octx.beginPath();
+      octx.moveTo(...P(cell.x0, cell.y0)); octx.lineTo(...P(cell.x1, cell.y0));
+      octx.lineTo(...P(cell.x1, cell.y1)); octx.lineTo(...P(cell.x0, cell.y1)); octx.closePath();
+      if (hoverCell && cell.id === hoverCell.id && !calibrating) { octx.fillStyle = 'rgba(46,204,113,0.45)'; octx.fill(); }
+      octx.stroke();
+    }
+    // Contour du tableau
+    octx.lineWidth = 3; octx.strokeStyle = calibrating ? '#f1c40f' : '#2ecc71';
+    octx.beginPath();
+    octx.moveTo(...P(0, 0)); octx.lineTo(...P(1, 0)); octx.lineTo(...P(1, 1)); octx.lineTo(...P(0, 1)); octx.closePath();
+    octx.stroke();
+    // Pointe
+    if (r && r.present) {
+      const [x, y] = P(r.u, r.v);
+      octx.fillStyle = '#e74c3c'; octx.strokeStyle = '#fff'; octx.lineWidth = 2;
+      octx.beginPath(); octx.arc(x, y, 8 * (window.devicePixelRatio || 1), 0, Math.PI * 2); octx.fill(); octx.stroke();
+    }
+  }
+
+  // Mini tableau (tap = ajouter à la main)
+  function buildMini() {
+    const mini = $('mini');
+    Board.cells.forEach(c => {
+      const d = document.createElement('div');
+      d.className = 'mc ' + c.kind;
+      d.dataset.id = c.id;
+      d.textContent = c.label;
+      d.style.left = (c.x0 * 100) + '%'; d.style.top = (c.y0 * 100) + '%';
+      d.style.width = ((c.x1 - c.x0) * 100) + '%'; d.style.height = ((c.y1 - c.y0) * 100) + '%';
+      d.addEventListener('click', () => addManual(c));
+      mini.appendChild(d);
+    });
+  }
+  function flashMini(cell) {
+    const m = document.querySelector(`#mini .mc[data-id="${cell.id}"]`);
+    if (!m) return;
+    m.classList.add('sel'); setTimeout(() => m.classList.remove('sel'), 500);
+  }
+
+  // ═════════ Réglages ═════════
+  function openSettings() {
+    $('s-dwell').value = S.dwell; $('s-dwell-v').textContent = S.dwell + ' s';
+    $('s-thr').value = S.threshold; $('s-thr-v').textContent = S.threshold;
+    $('s-off').value = S.offset; $('s-off-v').textContent = S.offset;
+    $('s-entry').value = S.entry;
+    $('s-adapt').checked = S.adapt; $('s-mask').checked = S.showMask;
+    $('s-announce').checked = S.announce; $('s-auto').checked = S.autoIA; $('s-non').checked = S.nonErases;
+    $('s-key').value = IA.getKey();
+    $('settings').classList.remove('hidden');
+  }
+  function closeSettings() { $('settings').classList.add('hidden'); }
+  function bindSettings() {
+    $('s-dwell').oninput = e => { S.dwell = +e.target.value; $('s-dwell-v').textContent = S.dwell + ' s'; saveSettings(); };
+    $('s-thr').oninput = e => { S.threshold = +e.target.value; $('s-thr-v').textContent = S.threshold; saveSettings(); };
+    $('s-off').oninput = e => { S.offset = +e.target.value; $('s-off-v').textContent = S.offset; saveSettings(); };
+    $('s-entry').onchange = e => { S.entry = e.target.value; saveSettings(); };
+    $('s-adapt').onchange = e => { S.adapt = e.target.checked; saveSettings(); };
+    $('s-mask').onchange = e => { S.showMask = e.target.checked; saveSettings(); };
+    $('s-announce').onchange = e => { S.announce = e.target.checked; saveSettings(); };
+    $('s-auto').onchange = e => { S.autoIA = e.target.checked; saveSettings(); };
+    $('s-non').onchange = e => { S.nonErases = e.target.checked; saveSettings(); };
+    $('s-key').onchange = e => IA.setKey(e.target.value.trim());
+    $('s-file').onchange = e => { if (e.target.files[0]) useVideoFile(e.target.files[0]); };
+    $('s-camera').onclick = () => { startCamera(); closeSettings(); };
+    $('s-reset').onclick = () => {
+      if (!confirm('Effacer la calibration du tableau ?')) return;
+      try { localStorage.removeItem('aac_corners'); } catch (e) { }
+      corners = null; mapFn = null; running = false; closeSettings(); startCalibration();
+    };
+  }
+
+  // ═════════ Démarrage ═════════
+  async function init() {
+    buildMini();
+    initHandles();
+    bindSettings();
+    $('btn-calib').onclick = startCalibration;
+    $('btn-ref').onclick = () => { unlockAudio(); captureReference(); };
+    $('btn-ok').onclick = validateCalibration;
+    $('btn-cancel').onclick = cancelCalibration;
+    $('btn-settings').onclick = openSettings;
+    $('btn-close').onclick = closeSettings;
+    $('btn-ia').onclick = () => { unlockAudio(); runIA(); };
+    $('btn-read').onclick = readAloud;
+    $('btn-erase').onclick = eraseLast;
+    $('btn-clear').onclick = () => { if (!seq.length || confirm('Tout effacer ?')) eraseAll(); };
+    $('btn-mini').onclick = () => $('miniwrap').classList.toggle('collapsed');
+    renderSeq();
+
+    if (corners) { Vision.setCorners(corners); mapFn = Vision.squareToQuad(corners); }
+    await startCamera();
+    if (mapFn) {
+      setStatus('Tableau calibré. Appuyez sur « Référence » quand le pied est hors du tableau.');
+      running = true;
+    } else {
+      setStatus('Appuyez sur « Calibrer » pour indiquer les coins du tableau.');
+    }
+    try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch (e) { }
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+  return { select, addManual };
 })();
