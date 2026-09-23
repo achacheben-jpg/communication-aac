@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="css/style.css?v=4">
+  <link rel="stylesheet" href="css/style.css?v=5">
 </head>
 <body>
 
@@ -112,6 +112,10 @@
       <button id="s-learn-reset-cells" class="btn">Oublier le décalage appris</button>
       <button id="s-learn-reset" class="btn danger">Tout oublier</button>
 
+      <h3>Caméra</h3>
+      <label>Caméra utilisée (une caméra USB branchée apparaît ici)
+        <select id="s-cam"><option value="">Automatique (caméra arrière)</option></select></label>
+
       <h3>Test et remise à zéro</h3>
       <label>Tester avec une vidéo du téléphone
         <input id="s-file" type="file" accept="video/*"></label>
@@ -120,11 +124,11 @@
     </div>
   </div>
 
-  <script src="js/board.js?v=4"></script>
-  <script src="js/vision.js?v=4"></script>
-  <script src="js/learn.js?v=4"></script>
-  <script src="js/ia.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/board.js?v=5"></script>
+  <script src="js/vision.js?v=5"></script>
+  <script src="js/learn.js?v=5"></script>
+  <script src="js/ia.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
   </script>

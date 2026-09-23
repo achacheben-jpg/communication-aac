@@ -47,20 +47,49 @@ window.App = (function () {
   try { corners = JSON.parse(localStorage.getItem('aac_corners') || 'null'); } catch (e) { }
 
   // ═════════ Caméra ═════════
-  async function startCamera() {
+  async function startCamera(deviceId) {
     stopVideoSource();
     usingFile = false;
+    if (deviceId === undefined) { try { deviceId = localStorage.getItem('aac_camera') || ''; } catch (e) { deviceId = ''; } }
+    const base = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    const constraints = deviceId
+      ? { video: Object.assign({ deviceId: { exact: deviceId } }, base), audio: false }
+      : { video: Object.assign({ facingMode: { ideal: 'environment' } }, base), audio: false };
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
-      setStatus('Caméra active');
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (e) {
+      if (deviceId) {
+        // La caméra choisie n'est plus là (USB débranché ?) : on revient à la caméra de l'appareil
+        try { localStorage.removeItem('aac_camera'); } catch (_) { }
+        return startCamera('');
+      }
       setStatus('Caméra refusée : ' + e.message, true);
+      return;
     }
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) { }
+    const track = stream.getVideoTracks()[0];
+    setStatus('Caméra active : ' + (track && track.label ? track.label : 'caméra de l’appareil'));
+    listCameras();
+  }
+
+  /** Remplit la liste des caméras disponibles (y compris une caméra USB sur iPad). */
+  async function listCameras() {
+    const sel = $('s-cam');
+    if (!sel || !navigator.mediaDevices.enumerateDevices) return;
+    let devices = [];
+    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch (e) { return; }
+    const cams = devices.filter(d => d.kind === 'videoinput');
+    let current = '';
+    try { current = localStorage.getItem('aac_camera') || ''; } catch (e) { }
+    sel.innerHTML = '<option value="">Automatique (caméra arrière)</option>';
+    cams.forEach((c, i) => {
+      const o = document.createElement('option');
+      o.value = c.deviceId;
+      o.textContent = c.label || `Caméra ${i + 1}`;
+      if (c.deviceId === current) o.selected = true;
+      sel.appendChild(o);
+    });
   }
 
   function stopVideoSource() {
@@ -451,6 +480,7 @@ window.App = (function () {
     $('s-announce').checked = S.announce; $('s-auto').checked = S.autoIA; $('s-non').checked = S.nonErases;
     $('s-key').value = IA.getKey();
     renderLearnStats();
+    listCameras();
     $('settings').classList.remove('hidden');
   }
   function renderLearnStats() {
@@ -477,6 +507,13 @@ window.App = (function () {
     $('s-key').onchange = e => IA.setKey(e.target.value.trim());
     $('s-file').onchange = e => { if (e.target.files[0]) useVideoFile(e.target.files[0]); };
     $('s-camera').onclick = () => { startCamera(); closeSettings(); };
+    $('s-cam').onchange = e => {
+      try { localStorage.setItem('aac_camera', e.target.value); } catch (_) { }
+      startCamera(e.target.value);
+    };
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', listCameras);
+    }
     $('s-export').onclick = async () => {
       const txt = Learn.exportJSON();
       try {
