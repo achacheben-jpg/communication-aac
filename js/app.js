@@ -42,6 +42,8 @@ window.App = (function () {
   const hist = [];             // dernières cases candidates
   let hoverCell = null, hoverSince = 0, armed = true, absentSince = 0;
   let lastTip = null;          // dernière position de la pointe (u,v)
+  let convMode = false;        // true = on choisit une des 4 réponses (4 grandes zones)
+  let lockFirst = false;       // après un changement de mode : ne pas valider là où le pied est déjà
   let fixIndex = -1;           // index de la case en cours de correction (-1 = aucune)
 
   try { corners = JSON.parse(localStorage.getItem('aac_corners') || 'null'); } catch (e) { }
@@ -202,6 +204,11 @@ window.App = (function () {
     if (calibrating) { drawOverlay(null); return; }
     if (!running || !mapFn || !Vision.hasReference() || video.readyState < 2 || video.paused) return;
     const r = Vision.analyze(video, { threshold: S.threshold, entry: S.entry, offset: S.offset, adapt: S.adapt, darkSock: S.darkSock, darkLevel: S.darkLevel });
+    // Changement de mode (cases ↔ 4 réponses) : on repart de zéro
+    if (Conv.isActive() !== convMode) {
+      convMode = Conv.isActive();
+      hist.length = 0; hoverCell = null; lockFirst = true;
+    }
     let cell = null;
     if (r.present) {
       // Décalage appris automatiquement grâce aux corrections
@@ -209,7 +216,7 @@ window.App = (function () {
       r.u = Math.min(1, Math.max(0, r.u + lo.u));
       r.v = Math.min(1, Math.max(0, r.v + lo.v));
       lastTip = { u: r.u, v: r.v };
-      cell = Board.cellAt(r.u, r.v);
+      cell = convMode ? Conv.quadAt(r.u, r.v) : Board.cellAt(r.u, r.v);
     }
     updateDwell(cell, r.present, t);
     drawOverlay(r);
@@ -219,19 +226,26 @@ window.App = (function () {
 
   function updateDwell(cell, present, t) {
     // Lissage : case majoritaire sur les 6 dernières images
-    hist.push(cell ? cell.id : -1);
+    hist.push(cell);
     if (hist.length > 6) hist.shift();
     const counts = {};
-    let bestId = -1, bestN = 0;
-    for (const id of hist) { counts[id] = (counts[id] || 0) + 1; if (counts[id] > bestN) { bestN = counts[id]; bestId = id; } }
-    const stable = bestId >= 0 ? Board.cells[bestId] : null;
+    let stable = null, bestN = 0;
+    for (const c of hist) {
+      const k = c ? c.id : '';
+      counts[k] = (counts[k] || 0) + 1;
+      if (counts[k] > bestN) { bestN = counts[k]; stable = c; }
+    }
 
     if (!present) {
       if (!absentSince) absentSince = t;
       if (t - absentSince > 400) { armed = true; hoverCell = null; hoverSince = 0; }
     } else absentSince = 0;
 
-    if (stable !== hoverCell) {
+    if (lockFirst) {
+      // Le pied était déjà posé au moment du changement : il doit bouger ou se lever
+      lockFirst = false;
+      hoverCell = stable; hoverSince = t; armed = !stable;
+    } else if (stable !== hoverCell) {
       hoverCell = stable;
       hoverSince = t;
       armed = true;
@@ -239,7 +253,11 @@ window.App = (function () {
     let progress = 0;
     if (hoverCell && armed) {
       progress = Math.min(1, (t - hoverSince) / (S.dwell * 1000));
-      if (progress >= 1) { select(hoverCell); armed = false; }
+      if (progress >= 1) {
+        armed = false;
+        if (hoverCell.q != null) Conv.choose(hoverCell.q);
+        else select(hoverCell);
+      }
     }
     showHover(hoverCell, armed ? progress : 1);
   }
@@ -361,7 +379,7 @@ window.App = (function () {
   function readAloud() {
     unlockAudio();
     const txt = phrase || IA.naive(seq);
-    if (txt) speak(txt);
+    if (txt) { speak(txt); Conv.addMine(txt); }
   }
 
   function speak(text) {
@@ -404,7 +422,8 @@ window.App = (function () {
     const el = $('hover');
     const bar = $('hoverbar');
     if (!cell) { el.textContent = 'Pied hors du tableau'; bar.style.width = '0%'; }
-    else { el.textContent = cell.label; bar.style.width = Math.round(progress * 100) + '%'; }
+    else { el.textContent = cell.q != null ? Conv.labelOf(cell) : cell.label; bar.style.width = Math.round(progress * 100) + '%'; }
+    Conv.highlight(cell && cell.q != null ? cell : null, progress);
     document.querySelectorAll('#mini .mc').forEach(m => m.classList.toggle('hov', !!cell && +m.dataset.id === cell.id));
   }
 
@@ -427,9 +446,23 @@ window.App = (function () {
         octx.fillRect(x - 2, y - 2, 4, 4);
       }
     }
+    // Mode réponses : les 4 grandes zones
+    const quad = (x0, y0, x1, y1) => {
+      octx.beginPath();
+      octx.moveTo(...P(x0, y0)); octx.lineTo(...P(x1, y0)); octx.lineTo(...P(x1, y1)); octx.lineTo(...P(x0, y1)); octx.closePath();
+    };
+    if (convMode && !calibrating) {
+      octx.lineWidth = 3; octx.strokeStyle = 'rgba(255,255,255,0.8)';
+      for (let q = 0; q < 4; q++) {
+        const x0 = (q % 2) * 0.5, y0 = Math.floor(q / 2) * 0.5;
+        quad(x0, y0, x0 + 0.5, y0 + 0.5);
+        if (hoverCell && hoverCell.q === q) { octx.fillStyle = 'rgba(46,204,113,0.45)'; octx.fill(); }
+        octx.stroke();
+      }
+    }
     // Grille des cases
     octx.lineWidth = 1; octx.strokeStyle = 'rgba(255,255,255,0.55)';
-    for (const cell of Board.cells) {
+    if (!convMode || calibrating) for (const cell of Board.cells) {
       octx.beginPath();
       octx.moveTo(...P(cell.x0, cell.y0)); octx.lineTo(...P(cell.x1, cell.y0));
       octx.lineTo(...P(cell.x1, cell.y1)); octx.lineTo(...P(cell.x0, cell.y1)); octx.closePath();
@@ -539,6 +572,7 @@ window.App = (function () {
   async function init() {
     buildMini();
     initHandles();
+    Conv.init({ speak, setStatus, unlockAudio, beep });
     bindSettings();
     $('btn-calib').onclick = startCalibration;
     $('btn-ref').onclick = () => { unlockAudio(); captureReference(); };

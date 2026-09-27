@@ -33,6 +33,27 @@ phrase et la lit à voix haute.
 - **Lire** prononce la phrase.
 - Toucher une case du mini tableau l'ajoute à la main (pour corriger).
 
+## Mode conversation (réponses proposées)
+
+Pour répondre plus vite quand on lui parle :
+
+1. Appuyer sur **🎤 Écouter**, puis lui parler normalement. On peut aussi
+   **taper** la phrase dans le champ en dessous (ou utiliser le micro du clavier).
+2. L'IA propose **4 réponses**, une par grand coin du tableau :
+   haut gauche, haut droit, bas gauche, bas droit.
+3. Il pose le pied dans le coin de la réponse choisie et le garde le temps
+   que la barre verte se remplisse : la réponse est dite à voix haute.
+4. Rien ne convient ? **🔄 Autres réponses** en demande 4 nouvelles ;
+   **✖ Aucune : il écrit** revient aux cases habituelles.
+
+Si le pied est déjà posé quand les réponses apparaissent, il doit le bouger ou
+le lever avant de choisir (pour éviter un choix involontaire). La conversation
+sert de contexte à l'IA ; **🗑 oublier** l'efface. Les phrases qu'il écrit avec
+les cases puis fait **Lire** sont aussi ajoutées à la conversation.
+
+Nécessite la clé API. La voix entendue est transcrite par l'iPhone (service
+d'Apple), puis le texte est envoyé à l'IA.
+
 ## Réglages utiles
 
 - **Temps de maintien** : durée pendant laquelle le pied doit rester sur la

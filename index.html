@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="css/style.css?v=5">
+  <link rel="stylesheet" href="css/style.css?v=6">
 </head>
 <body>
 
@@ -44,6 +44,31 @@
     <div id="hover">—</div>
     <div class="bar"><div id="hoverbar"></div></div>
   </div>
+
+  <!-- Conversation : on lui parle, l'IA propose 4 réponses, il choisit un coin du tableau -->
+  <section id="convwrap">
+    <div class="label">Conversation <button id="btn-conv-clear" class="btn tiny">🗑 oublier</button></div>
+    <div id="conv-hist"></div>
+    <div id="heard" class="raw"></div>
+    <div class="row">
+      <button id="btn-listen" class="btn primary">🎤 Écouter</button>
+    </div>
+    <form id="conv-form" class="row">
+      <input id="conv-input" type="text" placeholder="…ou taper ce qu'on lui dit" enterkeyhint="send" autocomplete="off">
+      <button class="btn" type="submit" aria-label="Envoyer">➤</button>
+    </form>
+    <p id="props-wait" class="hint hidden">… l'IA prépare 4 réponses</p>
+    <div id="props" class="hidden">
+      <button class="quad" data-q="0"><span class="qpos">↖ haut gauche</span><span class="qtext"></span><span class="qbarwrap"><span class="qbar"></span></span></button>
+      <button class="quad" data-q="1"><span class="qpos">↗ haut droit</span><span class="qtext"></span><span class="qbarwrap"><span class="qbar"></span></span></button>
+      <button class="quad" data-q="2"><span class="qpos">↙ bas gauche</span><span class="qtext"></span><span class="qbarwrap"><span class="qbar"></span></span></button>
+      <button class="quad" data-q="3"><span class="qpos">↘ bas droit</span><span class="qtext"></span><span class="qbarwrap"><span class="qbar"></span></span></button>
+    </div>
+    <div id="props-actions" class="row hidden">
+      <button id="btn-props-more" class="btn">🔄 Autres réponses</button>
+      <button id="btn-props-none" class="btn">✖ Aucune : il écrit</button>
+    </div>
+  </section>
 
   <!-- Ce qu'il montre -->
   <section>
@@ -124,11 +149,12 @@
     </div>
   </div>
 
-  <script src="js/board.js?v=5"></script>
-  <script src="js/vision.js?v=5"></script>
-  <script src="js/learn.js?v=5"></script>
-  <script src="js/ia.js?v=5"></script>
-  <script src="js/app.js?v=5"></script>
+  <script src="js/board.js?v=6"></script>
+  <script src="js/vision.js?v=6"></script>
+  <script src="js/learn.js?v=6"></script>
+  <script src="js/ia.js?v=6"></script>
+  <script src="js/conv.js?v=6"></script>
+  <script src="js/app.js?v=6"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
   </script>
